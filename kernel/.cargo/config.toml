@@ -1,0 +1,6 @@
+[build]
+target = "target.json"
+rustflags = ["-C",  "link-arg=-nostartfiles", "-C", "relocation-model=pic"]
+
+[unstable]
+build-std = ["core"]
