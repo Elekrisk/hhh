@@ -6,3 +6,6 @@ members = [
     "common",
     "vgafontconverter"
 ]
+
+[profile.release]
+debug = true

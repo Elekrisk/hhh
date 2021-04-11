@@ -1,11 +1,9 @@
 
 use common::Framebuffer;
 
-use crate::spinlock::Spinlock;
-
 static FONT: &[[[u8; 8]; 16]; 128] = unsafe { core::mem::transmute(include_bytes!("../vgafont.bin")) };
 
-static mut WRITER: Spinlock<Option<Writer>> = Spinlock::new(None);
+static mut WRITER: Option<Writer> = None;
 
 pub struct Writer {
     framebuffer: Framebuffer,
@@ -13,11 +11,11 @@ pub struct Writer {
 }
 
 pub fn init(framebuffer: Framebuffer) {
-    unsafe { *WRITER.lock() = Some(Writer { framebuffer, cursor: (0, 0) }); }
+    unsafe { WRITER = Some(Writer { framebuffer, cursor: (0, 0) }); }
 }
 
 pub fn clear() {
-    let mut writer = unsafe { WRITER.lock() };
+    let mut writer = unsafe { &mut WRITER };
     let writer = writer.as_mut().unwrap();
     for y in 0..writer.framebuffer.resolution_y {
         for x in 0..writer.framebuffer.resolution_x {
@@ -28,7 +26,7 @@ pub fn clear() {
 }
 
 pub fn write_char(c: char) {
-    let mut writer = unsafe { WRITER.lock() };
+    let mut writer = unsafe { &mut WRITER };
     let writer = writer.as_mut().unwrap();
     let glyph = FONT[c as usize];
     let (cy, cx) = writer.cursor;
