@@ -9,3 +9,6 @@ members = [
 
 [profile.release]
 debug = true
+
+[patch.crates-io]
+uefi = { git = "https://github.com/rust-osdev/uefi-rs", features = ["alloc", "logger", "exts"] }

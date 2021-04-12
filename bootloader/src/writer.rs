@@ -1,6 +1,8 @@
 
 use common::Framebuffer;
 
+use crate::Unwrap2;
+
 static FONT: &[[[u8; 8]; 16]; 128] = unsafe { core::mem::transmute(include_bytes!("../vgafont.bin")) };
 
 static mut WRITER: Option<Writer> = None;
@@ -15,7 +17,7 @@ pub fn init(framebuffer: Framebuffer) {
 }
 
 pub fn clear() {
-    let mut writer = unsafe { &mut WRITER };
+    let writer = unsafe { &mut WRITER };
     let writer = writer.as_mut().unwrap();
     for y in 0..writer.framebuffer.resolution_y {
         for x in 0..writer.framebuffer.resolution_x {
@@ -83,5 +85,15 @@ pub fn write_hex(val: u64) {
         let digit = (val >> i*4) & 0xF;
         let c = char::from_digit(digit as _, 16).unwrap();
         write_char(c)
+    }
+}
+
+pub fn write_bytes_hex(vals: &[u8]) {
+    for val in vals {
+        let high = val >> 4;
+        let low  = val & 0xF;
+        write_char(char::from_digit(high as _, 16).unwrap());
+        write_char(char::from_digit(low as _, 16).unwrap());
+        write_char(' ');
     }
 }

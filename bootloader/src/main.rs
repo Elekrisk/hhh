@@ -7,7 +7,6 @@
 #![feature(asm)]
 #![feature(vec_into_raw_parts)]
 #![feature(abi_x86_interrupt)]
-#![feature(assoc_char_funcs)]
 
 extern crate rlibc;
 extern crate uefi;
@@ -15,10 +14,12 @@ extern crate uefi_services;
 
 mod elf;
 mod writer;
+mod exceptions;
 
 use alloc::vec::Vec;
 use common::Framebuffer;
 use elf::{Elf, EntryType, HeaderEntry, SectionType};
+use exceptions::page_fault;
 use uefi::{prelude::*, proto::{console::gop::GraphicsOutput, media::{file::{File, FileAttribute, FileMode, FileType}, fs::SimpleFileSystem}}, table::boot::{AllocateType, MemoryDescriptor, MemoryType}};
 use uefi::{Handle, Status, table::{Boot, SystemTable}};
 use log::info;
@@ -39,7 +40,9 @@ fn efi_main(image_handle: Handle, system_table: SystemTable<Boot>) -> Status {
 
         info!("Bootloader initialized");
 
-        let fs_proto = system_table.boot_services().locate_protocol::<SimpleFileSystem>().unwrap().unwrap();
+        // let fs_proto = system_table.boot_services().locate_protocol::<SimpleFileSystem>().unwrap().unwrap();
+        let fs_proto = system_table.boot_services().get_image_file_system(image_handle).unwrap().unwrap();
+        
         // Safety: We override the usafe cell and thus have only one reference.
         // This reference should never be used after another call to locate_protocol::<SimpleFileSystem>().
         let fs_proto = unsafe { fs_proto.get().as_mut().unwrap() };
@@ -252,8 +255,29 @@ fn efi_main(image_handle: Handle, system_table: SystemTable<Boot>) -> Status {
         instructions::segmentation::load_ss(data_segment);
         instructions::segmentation::set_cs(code_segment);
 
-        IDT.page_fault.set_handler_fn(page_fault);
-        IDT.double_fault.set_handler_fn(double_fault);
+        {
+            use exceptions::*;
+            IDT.alignment_check.set_handler_fn(alignment_check);
+            IDT.bound_range_exceeded.set_handler_fn(bound_range_exceeded);
+            IDT.debug.set_handler_fn(debug);
+            IDT.device_not_available.set_handler_fn(device_not_available);
+            IDT.divide_error.set_handler_fn(divide_error);
+            IDT.general_protection_fault.set_handler_fn(general_protection_fault);
+            IDT.invalid_opcode.set_handler_fn(invalid_opcode);
+            IDT.invalid_tss.set_handler_fn(invalid_tss);
+            IDT.machine_check.set_handler_fn(machine_check);
+            IDT.non_maskable_interrupt.set_handler_fn(non_maskable_interrupt);
+            IDT.overflow.set_handler_fn(overflow);
+            IDT.security_exception.set_handler_fn(security_exception);
+            IDT.segment_not_present.set_handler_fn(segment_not_present);
+            IDT.simd_floating_point.set_handler_fn(simd_floating_point);
+            IDT.stack_segment_fault.set_handler_fn(stack_segment_fault);
+            IDT.virtualization.set_handler_fn(virtualization);
+            IDT.x87_floating_point.set_handler_fn(x87_floating_point);
+            IDT.breakpoint.set_handler_fn(breakpoint);
+            IDT.page_fault.set_handler_fn(page_fault);
+            IDT.double_fault.set_handler_fn(double_fault);
+        }
 
         IDT.load();
 
@@ -275,14 +299,12 @@ fn efi_main(image_handle: Handle, system_table: SystemTable<Boot>) -> Status {
                     let start = memmap_entry.phys_start;
                     let page_count = memmap_entry.page_count;
 
-                    if memmap_entry.ty == MemoryType::LOADER_DATA {
-                        writer::write_str("Mapping LOADER_DATA memory at ");
-                        writer::write_hex(start);
-                        writer::write_str("..");
-                        writer::write_hex(start + page_count * 4096);
-                        writer::write_str("\n");
-                        rows_written += 1;
-                    }
+                    writer::write_str("Mapping memory at ");
+                    writer::write_hex(start);
+                    writer::write_str("..");
+                    writer::write_hex(start + page_count * 4096);
+                    writer::write_str("\n");
+                    rows_written += 1;
                     
                     for i in 0..page_count {
                         // use x86_64::structures::paging::Mapper;
@@ -347,59 +369,27 @@ fn efi_main(image_handle: Handle, system_table: SystemTable<Boot>) -> Status {
                 _ => {}
             }
         }
+        // x86_64::instructions::interrupts::int3();
+        assert_mapped(VirtAddr::new(&GDT as *const GlobalDescriptorTable as u64), true);
+        assert_mapped(VirtAddr::new(&IDT as *const InterruptDescriptorTable as u64), true);
+        assert_mapped(VirtAddr::new(page_fault as u64), true);
         FRAMEBUFFER = (FRAMEBUFFER as u64 | index2virt(511, 0, 0, 0).as_u64()) as *mut u8;
+        let framebuffer = Framebuffer { ptr: (framebuffer.ptr as u64 | 0xFFFFFF8000000000) as *mut u8, ..framebuffer };
+        writer::init(framebuffer.clone());
         x86_64::registers::control::Cr3::write(PhysFrame::from_start_address(PhysAddr::new((&PAGE_TABLE_4) as *const PageTable as u64)).unwrap(), x86_64::registers::control::Cr3Flags::empty());
+        writer::write_str("Loading new page table succeeded  \n");
+        writer::write_str("                                  \n");
+        loop {}
     }
-    let framebuffer = Framebuffer { ptr: (framebuffer.ptr as u64 | 0xFFFFFF8000000000) as *mut u8, ..framebuffer };
-    writer::init(framebuffer.clone());
-    for _ in 0..rows_written {
-        writer::write_char('\n');
-    }
-
-    // let entry_addr = entry as u64;
-    // let idx4 = (entry_addr >> 39 & 0x1FF) as usize;
-    // let idx3 = (entry_addr >> 30 & 0x1FF) as usize;
-    // let idx2 = (entry_addr >> 21 & 0x1FF) as usize;
-    // let idx1 = (entry_addr >> 12 & 0x1FF) as usize;
-
-    // unsafe {
-    //     if !PAGE_TABLE_4[idx4].flags().contains(PageTableFlags::PRESENT) {
-    //         writer::write_str("entry ");
-    //         writer::write_hex(entry_addr);
-    //         writer::write_str(" not mapped in lvl4");
-    //         loop {}
-    //     }
-    //     let page_table_3 = (PAGE_TABLE_4[idx4].addr().as_u64() as *mut PageTable).as_mut().unwrap();
-    //     if !page_table_3[idx3].flags().contains(PageTableFlags::PRESENT) {
-    //         writer::write_str("entry ");
-    //         writer::write_hex(entry_addr);
-    //         writer::write_str(" not mapped in lvl3");
-    //         loop {}
-    //     }
-    //     let page_table_2 = (page_table_3[idx3].addr().as_u64() as *mut PageTable).as_mut().unwrap();
-    //     if !page_table_2[idx2].flags().contains(PageTableFlags::PRESENT) {
-    //         writer::write_str("entry ");
-    //         writer::write_hex(entry_addr);
-    //         writer::write_str(" not mapped in lvl2");
-    //         loop {}
-    //     }
-    //     let page_table_1 = (page_table_2[idx2].addr().as_u64() as *mut PageTable).as_mut().unwrap();
-    //     if !page_table_1[idx1].flags().contains(PageTableFlags::PRESENT) {
-    //         writer::write_str("entry ");
-    //         writer::write_hex(entry_addr);
-    //         writer::write_str(" not mapped in lvl1");
-    //         loop {}
-    //     }
-    //     writer::write_str("entry is mapped");
-    //     loop {}
-    // }
 
     fn index2virt(i4: u16, i3: u16, i2: u16, i1: u16) -> VirtAddr {
         let addr = ((i1 as u64) << 12) | ((i2 as u64) << 21) | ((i3 as u64) << 30) | ((i4 as u64) << 39);
         VirtAddr::new(addr)
     }
 
-    wait_debug();
+    // wait_debug();
+
+    // loop{}
 
     entry(framebuffer.clone());
 
@@ -417,12 +407,7 @@ impl<T, E> Unwrap2<T> for Result<T, E> {
         match self {
             Ok(v) => v,
             Err(_) => {
-                unsafe {
-                    for i in 100..200 {
-                        (FRAMEBUFFER as *mut u32).add(i).write(0xFF0000);
-                    }
-                }
-
+                writer::write_str("tried unwrapping Err(_) value\n");
                 loop {}
             }
         }
@@ -434,12 +419,7 @@ impl<T> Unwrap2<T> for Option<T> {
         match self {
             Some(v) => v,
             None => {
-                unsafe {
-                    for i in 100..200 {
-                        (FRAMEBUFFER as *mut u32).add(i).write(0xFF0000);
-                    }
-                }
-
+                writer::write_str("tried unwrapping None value\n");
                 loop {}
             }
         }
@@ -454,12 +434,72 @@ struct PageAllocator {
 }
 
 impl PageAllocator {
-    const BUFFER_SIZE: usize = 32;
+    const BUFFER_SIZE: usize = 64;
 
     pub const fn new() -> Self {
         Self {
             buffer: [[0; 4096]; PageAllocator::BUFFER_SIZE],
             count: 0
+        }
+    }
+}
+
+fn assert_mapped(addr: VirtAddr, write_success: bool) {
+    let addr = addr.as_u64();
+    let idx4 = (addr >> 39 & 0x1FF) as usize;
+    let idx3 = (addr >> 30 & 0x1FF) as usize;
+    let idx2 = (addr >> 21 & 0x1FF) as usize;
+    let idx1 = (addr >> 12 & 0x1FF) as usize;
+    unsafe {
+        writer::write_str("4 ");
+        if !PAGE_TABLE_4[idx4].flags().contains(PageTableFlags::PRESENT) {
+            writer::write_str("addr ");
+            writer::write_hex(addr);
+            writer::write_str(" not mapped in lvl4\n");
+            loop {}
+        }
+        writer::write_str("3 ");
+        let page_table_3 = (PAGE_TABLE_4[idx4].addr().as_u64() as *mut PageTable).as_mut().unwrap();
+        if !page_table_3[idx3].flags().contains(PageTableFlags::PRESENT) {
+            writer::write_str("addr ");
+            writer::write_hex(addr);
+            writer::write_str(" not mapped in lvl3\n");
+            loop {}
+        }
+        if page_table_3[idx3].flags().contains(PageTableFlags::HUGE_PAGE) {
+            if write_success {
+                writer::write_str("addr ");
+                writer::write_hex(addr);
+                writer::write_str(" is mapped\n");
+            }
+            return;
+        }
+        let page_table_2 = (page_table_3[idx3].addr().as_u64() as *mut PageTable).as_mut().unwrap();
+        if !page_table_2[idx2].flags().contains(PageTableFlags::PRESENT) {
+            writer::write_str("addr ");
+            writer::write_hex(addr);
+            writer::write_str(" not mapped in lvl2\n");
+            loop {}
+        }
+        if page_table_2[idx2].flags().contains(PageTableFlags::HUGE_PAGE) {
+            if write_success {
+                writer::write_str("addr ");
+                writer::write_hex(addr);
+                writer::write_str(" is mapped\n");
+            }
+            return;
+        }
+        let page_table_1 = (page_table_2[idx2].addr().as_u64() as *mut PageTable).as_mut().unwrap();
+        if !page_table_1[idx1].flags().contains(PageTableFlags::PRESENT) {
+            writer::write_str("addr ");
+            writer::write_hex(addr);
+            writer::write_str(" not mapped in lvl1\n");
+            loop {}
+        }
+        if write_success {
+            writer::write_str("addr ");
+            writer::write_hex(addr);
+            writer::write_str(" is mapped\n");
         }
     }
 }
@@ -473,11 +513,7 @@ unsafe impl FrameAllocator<Size4KiB> for PageAllocator {
             self.count += 1;
             Some(PhysFrame::from_start_address(addr).unwrap())
         } else {
-            unsafe {
-                for i in 0..100 {
-                    (FRAMEBUFFER as *mut u32).add(i).write_volatile(0x3333FF);
-                }
-            }
+            writer::write_str("ran out of pages in page allocator; increase the size of the page buffer\n");
             None
         }
     }
@@ -485,15 +521,6 @@ unsafe impl FrameAllocator<Size4KiB> for PageAllocator {
 
 static mut FRAMEBUFFER: *mut u8 = 0 as *mut u8;
 
-pub extern "x86-interrupt" fn page_fault(stack_frame: &mut InterruptStackFrame, error_code: PageFaultErrorCode) {
-    writer::write_str("\npage fault");
-    loop {}
-}
-
-pub extern "x86-interrupt" fn double_fault(stack_frame: &mut InterruptStackFrame, error_code: u64) -> ! {
-    writer::write_str("\ndouble fault");
-    loop {}
-}
 
 static mut GDT: GlobalDescriptorTable = GlobalDescriptorTable::new();
 static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();

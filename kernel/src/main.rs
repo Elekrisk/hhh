@@ -18,8 +18,8 @@ pub extern "sysv64" fn _start(framebuffer: Framebuffer) {
     writer::init(framebuffer);
     writer::clear();
     writer::write_str("Hello, world!");
-    // x86_64::instructions::interrupts::int3();
-    // writer::write_str("after interrupt");
+    x86_64::instructions::interrupts::int3();
+    writer::write_str("after interrupt");
 
     loop {}
 }

@@ -1,5 +1,6 @@
 [build]
 target = "x86_64-unknown-uefi"
+rustflags = ["-g"]
 
 [unstable]
 build-std = ["core", "compiler_builtins", "alloc"]

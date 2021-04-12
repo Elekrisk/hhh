@@ -10,10 +10,10 @@ edition = "2018"
 wait_for_gdb = []
 
 [dependencies]
-uefi = { version = "0.8", features = ["alloc", "logger", "exts"] }
+uefi = { git = "https://github.com/rust-osdev/uefi-rs", features = ["alloc", "logger", "exts"] }
 uefi-services = "0.5"
 rlibc = "1"
 log = "0.4"
 ucs2 = "0.3"
 common = { path = "../common" }
-x86_64 = { version = "0.13", features = ["inline_asm"] }
+x86_64 = { version = "0.14", features = ["inline_asm"] }
