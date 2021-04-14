@@ -3,42 +3,46 @@
 #![feature(lang_items)]
 #![feature(asm)]
 #![feature(assoc_char_funcs)]
+#![feature(panic_info_message)]
+#![feature(const_generics)]
+#![feature(const_evaluatable_checked)]
+#![feature(const_panic)]
 
-mod spinlock;
-mod writer;
+mod usb;
+
+#[macro_use]
+extern crate common;
 
 use core::panic::PanicInfo;
 
-use common::Framebuffer;
+use common::{Framebuffer, MachineInfo};
 
 extern crate rlibc;
 
 #[no_mangle]
-pub extern "sysv64" fn _start(framebuffer: Framebuffer) {
-    writer::init(framebuffer);
-    writer::clear();
-    writer::write_str("Hello, world!");
-    x86_64::instructions::interrupts::int3();
-    writer::write_str("after interrupt");
+pub extern "sysv64" fn _start(machine_info: MachineInfo) {
+    unsafe { common::writer::init(machine_info.framebuffer) };
+    common::writer::clear();
+    // x86_64::instructions::interrupts::int3();
+    println!("Hello, world!");
 
     loop {}
 }
 
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
-    writer::write_str("Panic!\n");
     let loc = info.location().unwrap();
-    writer::write_str(loc.file());
-    writer::write_str(":");
-    writer::write_u64(loc.line() as _);
-    writer::write_str(":");
-    writer::write_u64(loc.column() as _);
-    writer::write_str(": ");
-    writer::write_str(
-        info.payload()
-            .downcast_ref::<&'static str>()
-            .unwrap_or(&"!no message!"),
-    );
+    match info.message() {
+        Some(v) => println!("{}: Panic: '{}'", loc, v),
+        None => {
+            let msg = match info.payload().downcast_ref::<&'static str>() {
+                Some(v) => *v,
+                None => "Box<Any>"
+            };
+            println!("{}: Panic: '{}'", loc, msg);
+        }
+    }
+
     loop {}
 }
 

@@ -3,7 +3,6 @@ use core::{mem::MaybeUninit::{self}, slice};
 use alloc::{vec::Vec};
 use core::convert::TryInto;
 
-
 pub struct Elf<'a> {
     pub abi: Abi,
     pub object_type: ObjectType,
@@ -81,7 +80,7 @@ impl<'a> Elf<'a> {
             let entry_type = match u32::from_le_bytes(data[offset..offset+4].try_into().unwrap()) {
                 0 => EntryType::None,
                 1 => {
-                    log::info!("Loadable section with data offset {:x}", data_offset);
+                    println!("Loadable section with data offset {:x}", data_offset);
                     EntryType::Load
                 },
                 2 => EntryType::Dynamic,

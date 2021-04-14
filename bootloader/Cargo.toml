@@ -11,9 +11,10 @@ wait_for_gdb = []
 
 [dependencies]
 uefi = { git = "https://github.com/rust-osdev/uefi-rs", features = ["alloc", "logger", "exts"] }
-uefi-services = "0.5"
+uefi-services = { version = "0.5", features = ["no_panic_handler"] }
 rlibc = "1"
 log = "0.4"
 ucs2 = "0.3"
 common = { path = "../common" }
 x86_64 = { version = "0.14", features = ["inline_asm"] }
+acpi = "2.3"

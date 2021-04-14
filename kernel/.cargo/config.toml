@@ -1,6 +1,9 @@
 [build]
 target = "target.json"
-rustflags = ["-C", "relocation-model=pic"]
+rustflags = [
+    "-C", "relocation-model=pic",
+    "-C", "link-args=-Tkernel/link.ld"
+]
 
 [unstable]
 build-std = ["core"]
