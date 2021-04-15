@@ -1,3 +1,5 @@
+use super::register::{Num, Register};
+
 
 #[repr(C, packed)]
 struct TrbTemplate {
@@ -9,11 +11,11 @@ struct TrbTemplate {
 
 ///  Lookup table for accessing DeviceContext structures.
 #[repr(C, align(4096))]
-struct DeviceContextBaseAddressArray {
-    contents: [*mut DeviceContextWrapper; 256]
+struct DeviceContextBaseAddressArray<T: Num> {
+    contents: [*mut DeviceContext<T>; 256]
 }
 
-impl DeviceContextBaseAddressArray {
+impl<T: Num> DeviceContextBaseAddressArray<T> {
     pub const fn new() -> Self {
         DeviceContextBaseAddressArray {
             contents: [0 as _; 256]
@@ -23,21 +25,25 @@ impl DeviceContextBaseAddressArray {
 
 
 #[repr(C, align(4096))]
-struct DeviceContextWrapper;
+struct DeviceContextBaseAddressArrayWrapper;
+
+impl DeviceContextBaseAddressArrayWrapper {
+
+}
 
 /// Contains device configuration and state information.
 #[repr(C, align(4096))]
-struct DeviceContext32 {
-    slot_context: SlotContext32,
-    endpoint_contexts: [EndpointContext32; 31]
+struct DeviceContext<T: Num> {
+    slot_context: SlotContext<T>,
+    endpoint_contexts: [EndpointContext<T>; 31]
 }
 
 #[repr(C)]
-struct SlotContext32 {
-
+struct SlotContext<T: Num> {
+    data: Register<T>
 }
 
 #[repr(C)]
-struct EndpointContext32 {
-
+struct EndpointContext<T: Num> {
+    data: Register<T>
 }

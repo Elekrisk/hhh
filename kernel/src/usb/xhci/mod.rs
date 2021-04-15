@@ -1,479 +1,989 @@
 
+use x86_64::VirtAddr;
+
+use self::regs::{Capability, Operational, Port};
+
 mod datastructures;
+#[macro_use]
 mod register;
 
-const U32_SIZE: usize = core::mem::size_of::<u32>();
-
-#[derive(Clone, Copy)]
-struct Pointer(*mut u32);
-
-impl Pointer {
-    unsafe fn read_offset(self, byte_offset: usize) -> u32 {
-        self.0.add(byte_offset / U32_SIZE).read_volatile()
-    }
-    unsafe fn write_offset(self, byte_offset: usize, value: u32) {
-        self.0.add(byte_offset / U32_SIZE).write_volatile(value);
-    }
-    unsafe fn modify_offset<F: FnOnce(&mut u32)>(self, byte_offset: usize, modify_fun: F) {
-        let ptr = self.0.add(byte_offset / U32_SIZE);
-        let mut value = ptr.read_volatile();
-        modify_fun(&mut value);
-        ptr.write_volatile(value);
-    }
-    unsafe fn read_offset_64(self, byte_offset: usize) -> u64 {
-        (self.0.add(byte_offset / U32_SIZE) as *mut u64).read_volatile()
-    }
-    unsafe fn write_offset_64(self, byte_offset: usize, value: u64) {
-        (self.0.add(byte_offset / U32_SIZE) as *mut u64).write_volatile(value);
-    }
-    unsafe fn modify_offset_64<F: FnOnce(&mut u64)>(self, byte_offset: usize, modify_fun: F) {
-        let ptr = self.0.add(byte_offset / U32_SIZE) as *mut u64;
-        let mut value = ptr.read_volatile();
-        modify_fun(&mut value);
-        ptr.write_volatile(value);
-    }
-}
-
-mod capability {
-    use core::mem::Discriminant;
-
-    use super::register::{RegisterValue, MaskInfo, Register};
+mod regs {
+    use super::register::Register;
 
     #[repr(C)]
-    pub struct CapabilityRegister {
-        pub first_register: Register<u32, CapabilityRegister1>,
-        pub hcsparams1: Register<u32, HcsParams1>,
-        pub hcsparams2: Register<u32, HcsParams2>,
+    pub struct Capability {
+        first: Register,
+        hcsparams1: Register,
+        hcsparams2: Register,
+        hcsparams3: Register,
+        hccparams1: Register,
+        dboff: Register,
+        rtsoff: Register,
+        hccparams2: Register,
+        vtiosoff: Register
     }
 
-    pub enum CapabilityRegister1 {
-        CapabilityLength(u8),
-        InterfaceVersion(u16)
-    }
-
-    impl CapabilityRegister1 {
-        pub const CAP_LENGTH: Self = Self::CapabilityLength(0);
-        pub const INT_VERSION: Self = Self::InterfaceVersion(0);
-    }
-
-    impl RegisterValue<u32> for CapabilityRegister1 {
-        fn from_value(val: u32, dummy_value: &Self) -> Self {
-            match dummy_value {
-                Self::CapabilityLength(_) => Self::CapabilityLength(val as _),
-                Self::InterfaceVersion(_) => Self::InterfaceVersion(val as _)
-            }
+    impl Capability {
+        pub fn cap_length(&self) -> u8 {
+            (unsafe { self.first.read() } & 0xFF) as u8
         }
 
-        fn to_value(&self) -> u32 {
-            match self {
-                Self::CapabilityLength(v) => *v as _,
-                Self::InterfaceVersion(v) => *v as _
-            }
+        pub fn interface_version(&self) -> u16 {
+            (unsafe { self.first.read() } >> 16 & 0xFFFFF) as u16
         }
 
-        fn bits(&self) -> MaskInfo {
-            match self {
-                Self::CapabilityLength(_) => MaskInfo::new(8, 0),
-                Self::InterfaceVersion(_) => MaskInfo::new(16, 16),
-            }
+        // hcsparams1
+
+        pub fn max_device_slots(&self) -> u8 {
+            (unsafe { self.hcsparams1.read() } & 0xFF) as u8
+        }
+
+        pub fn max_interrupters(&self) -> u16 {
+            (unsafe { self.hcsparams1.read() } >> 8 & 0x7FF) as u16
+        }
+
+        pub fn max_ports(&self) -> u8 {
+            (unsafe { self.hcsparams1.read() } >> 24) as u8
+        }
+
+        // hcsparams2
+
+        pub fn ist(&self) -> u8 {
+            (unsafe { self.hcsparams2.read() } & 0xF) as u8
+        }
+
+        pub fn erst_max(&self) -> u8 {
+            (unsafe { self.hcsparams2.read() } >> 4 & 0xF) as u8
+        }
+
+        pub fn scratchpad_restore(&self) -> bool {
+            (unsafe { self.hcsparams2.read() } >> 26 & 1) == 1
+        }
+
+        pub fn max_scratchpad_buffers(&self) -> u16 {
+            let low = (unsafe { self.hcsparams2.read() } >> 21 & 0x1F) as u16;
+            let high = (unsafe { self.hcsparams2.read() } >> 27 & 0x1F) as u16;
+            low | high << 5
+        }
+
+        // hcsparams3
+
+        pub fn u1_device_exit_latency(&self) -> u8 {
+            (unsafe { self.hcsparams3.read() } & 0xFF) as u8
+        }
+
+        pub fn u2_device_exit_latency(&self) -> u16 {
+            (unsafe { self.hcsparams3.read() } >> 16) as u16
+        }
+
+        // hccparams1
+
+        pub fn uses_64_bit_addresses(&self) -> bool {
+            (unsafe { self.hccparams1.read() } & 1) == 1
+        }
+
+        pub fn bandwidth_negotiation(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 1 & 1) == 1
+        }
+
+        pub fn uses_64_bit_contexts(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 2 & 1) == 1
+        }
+
+        pub fn port_power_control(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 3 & 1) == 1
+        }
+
+        pub fn port_indicators_control(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 4 & 1) == 1
+        }
+
+        pub fn light_hc_reset(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 5 & 1) == 1
+        }
+
+        pub fn latency_tolerance_messaging(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 6 & 1) == 1
+        }
+
+        pub fn secondary_sid(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 7 & 1) == 0
+        }
+
+        pub fn parse_all_event_data(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 8 & 1) == 1
+        }
+
+        pub fn stopped_short_packet(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 9 & 1) == 1
+        }
+
+        pub fn stopped_edtla(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 10 & 1) == 1
+        }
+
+        pub fn contiguous_frame_id(&self) -> bool {
+            (unsafe { self.hccparams1.read() } >> 11 & 1) == 1
+        }
+
+        pub fn max_primary_stream_array_size(&self) -> u8 {
+            (unsafe {self.hccparams1.read() } >> 12 & 0xF) as u8
+        }
+
+        pub fn xhci_extended_capabilities_pointer(&self) -> u32 {
+            ((unsafe { self.hccparams1.read() } >> 16 & 0xFFFF) as u32) << 2 
+        }
+
+        // dboff
+
+        pub fn doorbell_offset(&self) -> u32 {
+            unsafe { self.dboff.read() }
+        }
+
+        // rtsoff
+
+        pub fn runtime_register_space_offset(&self) -> u32 {
+            unsafe { self.rtsoff.read() }
+        }
+
+        // hccparams2
+
+        pub fn u3_entry(&self) -> bool {
+            (unsafe { self.hccparams2.read() }) & 1 == 1
+        }
+
+        pub fn configure_endpoint_command_max_exit_latency_too_large(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 1 & 1) == 1
+        }
+
+        pub fn force_save_context(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 2 & 1) == 1
+        }
+
+        pub fn compliance_transition(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 3 & 1) == 1
+        }
+
+        pub fn large_esit_payload(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 4 & 1) == 1
+        }
+
+        pub fn configuration_information(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 5 & 1) == 1
+        }
+
+        pub fn extended_tbc(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 6 & 1) == 1
+        }
+
+        pub fn extended_tbc_trb_status(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 7 & 1) == 1
+        }
+
+        pub fn get_set_extended_property(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 8 & 1) == 1
+        }
+
+        pub fn virtualization_based_trusted_io(&self) -> bool {
+            (unsafe { self.hccparams2.read() } >> 9 & 1) == 1
+        }
+
+        // vtiosoff
+
+        pub fn vtio_register_space_offset(&self) -> u32 {
+            unsafe { self.vtiosoff.read() }
         }
     }
 
-    pub enum HcsParams1 {
-        NumberOfDeviceSlots(u8),
-        NumberOfInterrupters(u16),
-        NumberOfPorts(u8)
+
+    #[repr(C)]
+    pub struct Operational {
+        /// Write strategy: Preserve for all
+        usbcmd: Register,
+        /// Write strategy: Zero for all
+        usbsts: Register,
+        pagesize: Register,
+        _reserved: [Register; 2],
+        /// Write strategy: Preserve for all
+        dnctrl: Register,
+        /// Write strategy: Mixed
+        crcr: Register<u64>,
+        _reserved2: [Register; 4],
+        dcbaap: Register<u64>,
+        /// Write strategy: Preserve for all
+        config: Register
     }
 
-    impl HcsParams1 {
-        pub const NUM_DEVICE_SLOTS: Self = Self::NumberOfDeviceSlots(0);
-        pub const NUM_INTERRUPTERS: Self = Self::NumberOfInterrupters(0);
-        pub const NUM_PORTS: Self = Self::NumberOfPorts(0);
+    impl Operational {
+        pub fn get_run_stop(&self) -> bool {
+            (unsafe { self.usbcmd.read() } & 1) == 1
+        }
 
-        pub fn to_num_device_slots(self) -> u8 {
-            if let Self::NumberOfDeviceSlots(v) = self {
-                v
+        /// The software MUST check that the controller is halted
+        /// before calling this function.
+        pub unsafe fn start_running(&mut self) {
+            let mut val = self.usbcmd.read();
+            val |= 1;
+            self.usbcmd.write(val);
+        }
+
+        /// Poll `.is_halted()` to wait for the controller to finish
+        /// halting.
+        ///
+        /// If any event rings are full before calling this function,
+        /// events may get lost.
+        pub unsafe fn stop_running(&mut self) {
+            let mut val = self.usbcmd.read();
+            val &= !1;
+            self.usbcmd.write(val);
+        }
+
+        pub fn interrupts_enabled(&self) -> bool {
+            (unsafe { self.usbcmd.read() } >> 2 & 1) == 1
+        }
+
+        pub unsafe fn set_interrupts_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 2;
             } else {
-                panic!("Variant wasn't NumberOfDeviceSlots");
+                val &= !(1 << 2);
             }
+            self.usbcmd.write(val);
         }
-        pub fn to_num_interrupters(self) -> u16 {
-            if let Self::NumberOfInterrupters(v) = self {
-                v
+
+        pub fn host_system_error_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(3) }
+        }
+
+        pub unsafe fn set_host_system_error_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 3;
             } else {
-                panic!("Variant wasn't NumberOfInterrupters");
+                val &= !(1 << 3);
             }
+            self.usbcmd.write(val);
         }
-        pub fn to_num_ports(self) -> u8 {
-            if let Self::NumberOfPorts(v) = self {
-                v
+
+        pub fn light_host_controller_reset_complete(&self) -> bool {
+            unsafe { !self.usbcmd.get_bit(7) }
+        }
+
+        pub unsafe fn light_host_controller_reset(&mut self) {
+            let mut val = self.usbcmd.read();
+            val |= 1 << 7;
+            self.usbcmd.write(val);
+        }
+
+        pub unsafe fn controller_save_state(&mut self) {
+            let mut val = self.usbcmd.read();
+            val |= 1 << 8;
+            self.usbcmd.write(val);
+        }
+
+        pub unsafe fn controller_restore_state(&mut self) {
+            let mut val = self.usbcmd.read();
+            val |= 1 << 9;
+            self.usbcmd.write(val);
+        }
+
+        pub fn wrap_event_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(10) }
+        }
+
+        pub unsafe fn set_wrap_event_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 10;
             } else {
-                panic!("Variant wasn't NumberOfPorts");
+                val &= !(1 << 10);
             }
+            self.usbcmd.write(val);
         }
-    }
 
-    impl RegisterValue<u32> for HcsParams1 {
-        fn from_value(val: u32, dummy_value: &Self) -> Self {
-            match dummy_value {
-                HcsParams1::NumberOfDeviceSlots(_) => Self::NumberOfDeviceSlots(val as _),
-                HcsParams1::NumberOfInterrupters(_) => Self::NumberOfInterrupters(val as _),
-                HcsParams1::NumberOfPorts(_) => Self::NumberOfPorts(val as _),
+        pub fn u3_mfindex_stop_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(11) }
+        }
+
+        pub unsafe fn set_u32_mfindex_stop_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 11;
+            } else {
+                val &= !(1 << 11);
             }
+            self.usbcmd.write(val);
         }
 
-        fn to_value(&self) -> u32 {
-            match self {
-                HcsParams1::NumberOfDeviceSlots(v) => *v as _,
-                HcsParams1::NumberOfInterrupters(v) => *v as _,
-                HcsParams1::NumberOfPorts(v) => *v as _,
+        pub fn cem_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(13) }
+        }
+
+        pub unsafe fn set_cem_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 13;
+            } else {
+                val &= !(1 << 13);
             }
+            self.usbcmd.write(val);
         }
 
-        fn bits(&self) -> MaskInfo {
-            match self {
-                HcsParams1::NumberOfDeviceSlots(_) => MaskInfo::new(8, 0),
-                HcsParams1::NumberOfInterrupters(_) => MaskInfo::new(10, 8),
-                HcsParams1::NumberOfPorts(_) => MaskInfo::new(8, 24)
+        pub fn extended_tbc_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(14) }
+        }
+
+        pub unsafe fn set_extended_tbc_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 14;
+            } else {
+                val &= !(1 << 14);
             }
+            self.usbcmd.write(val);
         }
-    }
 
-    pub enum HcsParams2 {
-        IsochronousSchedulingThreshold(IstValue),
-        EventRingSegmentTableMax(u8),
-        MaxScratchpadBuffersHigh(u8),
-        ScratchpadRestore(bool),
-        MaxScratchpadBuffersLow(u8)
-    }
+        pub fn extended_tbc_trb_status_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(15) }
+        }
 
-    pub enum IstValue {
-        Frames(u8),
-        MicroFrames(u8)
-    }
-
-    impl HcsParams2 {
-        pub const IST: Self = Self::IsochronousSchedulingThreshold(IstValue::MicroFrames(0));
-        pub const ERST_MAX: Self = Self::EventRingSegmentTableMax(0);
-        pub const MSB_HI: Self = Self::MaxScratchpadBuffersHigh(0);
-        pub const SPR: Self = Self::ScratchpadRestore(false);
-        pub const MSB_LO: Self = Self::MaxScratchpadBuffersLow(0);
-    }
-
-    impl RegisterValue<u32> for HcsParams2 {
-        fn from_value(val: u32, dummy_value: &Self) -> Self {
-            match dummy_value {
-                HcsParams2::IsochronousSchedulingThreshold(_) => HcsParams2::IsochronousSchedulingThreshold(match (val >> 3) & 1 {
-                    0 => IstValue::MicroFrames(val as u8 & 0b11),
-                    1 => IstValue::Frames(val as u8 & 0b11),
-                    _ => unreachable!()
-                }),
-                HcsParams2::EventRingSegmentTableMax(_) => HcsParams2::EventRingSegmentTableMax(val as _),
-                HcsParams2::MaxScratchpadBuffersHigh(_) => HcsParams2::MaxScratchpadBuffersHigh(val as _),
-                HcsParams2::ScratchpadRestore(_) => HcsParams2::ScratchpadRestore(val > 1),
-                HcsParams2::MaxScratchpadBuffersLow(_) => HcsParams2::MaxScratchpadBuffersLow(val as _),
+        pub unsafe fn set_extended_tbc_trb_status_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 15;
+            } else {
+                val &= !(1 << 15);
             }
+            self.usbcmd.write(val);
         }
 
-        fn to_value(&self) -> u32 {
-            match self {
-                HcsParams2::IsochronousSchedulingThreshold(v) => match v {
-                    IstValue::Frames(v) => *v as u32 | 1<<3,
-                    IstValue::MicroFrames(v) => *v as _
-                }
-                HcsParams2::EventRingSegmentTableMax(v) => *v as _,
-                HcsParams2::MaxScratchpadBuffersHigh(v) => *v as _,
-                HcsParams2::ScratchpadRestore(v) => *v as _,
-                HcsParams2::MaxScratchpadBuffersLow(v) => *v as _
+        pub fn vtio_enabled(&self) -> bool {
+            unsafe { self.usbcmd.get_bit(16) }
+        }
+
+        pub unsafe fn set_vtio_enabled(&mut self, status: bool) {
+            let mut val = self.usbcmd.read();
+            if status {
+                val |= 1 << 16;
+            } else {
+                val &= !(1 << 16);
             }
+            self.usbcmd.write(val);
         }
 
-        fn bits(&self) -> MaskInfo {
-            match self {
-                HcsParams2::IsochronousSchedulingThreshold(_) => MaskInfo::new(4, 0),
-                HcsParams2::EventRingSegmentTableMax(_) => MaskInfo::new(4, 4),
-                HcsParams2::MaxScratchpadBuffersHigh(_) => MaskInfo::new(5, 21),
-                HcsParams2::ScratchpadRestore(_) => MaskInfo::new(1, 26),
-                HcsParams2::MaxScratchpadBuffersLow(_) => MaskInfo::new(5, 27),
+        // USBSTS
+
+        pub fn is_halted(&self) -> bool {
+            unsafe { self.usbsts.get_bit(0) }
+        }
+
+        pub fn host_system_error(&self) -> bool {
+            unsafe { self.usbsts.get_bit(2) }
+        }
+
+        pub unsafe fn clear_host_system_error(&mut self) {
+            self.usbsts.write(1 << 2);
+        }
+
+        pub fn event_interrupt(&self) -> bool {
+            unsafe { self.usbsts.get_bit(3) }
+        }
+
+        pub unsafe fn clear_event_interrupt(&mut self) {
+            self.usbsts.write(1 << 3);
+        }
+
+        pub fn port_change_detect(&self) -> bool {
+            unsafe { self.usbsts.get_bit(4) }
+        }
+
+        pub unsafe fn clear_port_change_detect(&mut self) {
+            self.usbsts.write(1 << 4);
+        }
+
+        pub fn save_state_status(&self) -> bool {
+            unsafe { self.usbsts.get_bit(8) }
+        }
+
+        pub fn restore_state_status(&self) -> bool {
+            unsafe { self.usbsts.get_bit(9) }
+        }
+
+        pub fn save_restore_error(&self) -> bool {
+            unsafe { self.usbsts.get_bit(10) }
+        }
+
+        pub unsafe fn clear_save_restore_error(&mut self) {
+            self.usbsts.write(1 << 10);
+        }
+
+        pub fn controller_ready(&self) -> bool {
+            unsafe { !self.usbsts.get_bit(11) }
+        }
+
+        pub fn host_controller_error(&self) -> bool {
+            unsafe { !self.usbsts.get_bit(12) }
+        }
+
+        // pagesize
+
+        pub fn page_size(&self) -> u32 {
+            (unsafe { self.pagesize.read() } & 0xFFFFFF) << 12
+        }
+
+        // dnctrl
+
+        pub fn notification_enabled(&mut self, notification_type: usize) -> bool {
+            assert!(notification_type <= 15);
+            unsafe { self.dnctrl.get_bit(notification_type) }
+        }
+
+        pub unsafe fn set_notification_enabled(&mut self, notification_type: usize, status: bool) {
+            let mut val = self.dnctrl.read();
+            if status {
+                val |= 1 << notification_type;
+            } else {
+                val &= !(1 << notification_type);
             }
+            self.dnctrl.write(val);
+        }
+
+        // crcr
+
+        pub unsafe fn set_ring_cycle_state(&mut self, rcs: bool, crp: u64) {
+            let mut val = self.crcr.read();
+            // bit 0 (RCS) is RW
+            // bits 1:2 (CS, CA) are RW1S and are thus set to 0
+            // bit 3 is RO
+            // Preserve 4:5
+            // bits 6:31 (CRP) is RW
+            val &= 0b11 << 4;
+            val |= rcs as u64;
+            val |= crp;
+            self.crcr.write(val);
+        }
+
+        pub unsafe fn stop_command(&mut self) {
+            let mut val = self.crcr.read();
+            val &= 0b11 << 4;
+            val |= 1 << 1;
+            self.crcr.write(val);
+        }
+
+        pub unsafe fn abort_command(&mut self) {
+            let mut val = self.crcr.read();
+            val &= 0b11 << 4;
+            val |= 1 << 2;
+            self.crcr.write(val);
+        }
+
+        // dcbaap
+
+        pub fn device_context_base_address_array_pointer(&self) -> u64 {
+            unsafe { self.dcbaap.read() }
+        }
+
+        pub unsafe fn set_device_context_base_address_array_pointer(&mut self, ptr: u64) {
+            self.dcbaap.write(ptr)
+        }
+
+        // config
+
+        pub fn max_device_slots_enabled(&self) -> u8 {
+            (unsafe { self.dcbaap.read() } & 0xFF) as u8
+        }
+
+        pub unsafe fn set_max_device_slots_enabled(&mut self, value: u8) {
+            let mut val = self.config.read();
+            val &= !0xFF;
+            val |= value as u32;
+            self.config.write(val);
+        }
+
+        pub fn u32_entry_enabled(&self) -> bool {
+            unsafe { self.config.get_bit(8) }
+        }
+
+        pub unsafe fn set_u32_entry_enabled(&mut self, status: bool) {
+            let mut val = self.config.read();
+            if status {
+                val |= 1 << 8;
+            } else {
+                val &= !(1 << 8);
+            }
+            self.config.write(val);
+        }
+
+        pub fn configuration_information_enabled(&self) -> bool {
+            unsafe { self.config.get_bit(8) }
+        }
+
+        pub unsafe fn set_configuration_information_enabled(&mut self, status: bool) {
+            let mut val = self.config.read();
+            if status {
+                val |= 1 << 8;
+            } else {
+                val &= !(1 << 8);
+            }
+            self.config.write(val);
         }
     }
-}
 
-
-
-struct Pointers {
-    capability: *mut u32,
-    operational: *mut u32,
-    runtime: *mut u32,
-    doorbell: *mut u32
-}
-
-pub struct Operationals {
-    base: Pointer
-}
-
-impl Operationals {
-    unsafe fn write_usb_command<F: FnOnce(&mut u32)>(&mut self, fun: F) {
-        self.base.modify_offset(0, fun);
+    #[repr(C)]
+    pub struct Port {
+        /// Write strategy: Mixed
+        ///
+        /// ```ignore
+        /// preserve-mask 0xE00C200
+        /// 0   z
+        /// 1   z
+        /// 2   z
+        /// 3   z
+        /// 4   z
+        /// 5   z
+        /// 6   z
+        /// 7   z
+        /// 8   z
+        /// 9   p
+        /// 10  z
+        /// 11  z
+        /// 12  z
+        /// 13  z
+        /// 14  p
+        /// 15  p
+        /// 16  z
+        /// 17  z
+        /// 18  z
+        /// 19  z
+        /// 20  z
+        /// 21  z
+        /// 22  z
+        /// 23  z
+        /// 24  z
+        /// 25  p
+        /// 26  p
+        /// 27  p
+        /// 28  z
+        /// 29  z
+        /// 30  z
+        /// 31  z
+        /// ```
+        portsc: Register,
+        /// Write strategy: Preserve for all
+        portpmsc: Register,
+        portli: Register,
+        porthlpmc: Register
     }
 
-    // -- USBCMD --
+    impl Port {
+        // portsc
+        const PORTSC_PMASK: u32 = 0x0E00C200;
 
-    /// Halts the execution of the active schedule.
-    ///
-    /// Halting execution may cause events to get lost
-    /// if any event rings are full.
-    unsafe fn halt_execution(&mut self) {
-        self.write_usb_command(|v| v.reset(0));
-    }
-
-    /// Starts the execution of the active schedule.
-    ///
-    /// The hardware must be halted.
-    /// This can be checked with `.is_halted()`,
-    /// and can be waited for with `.spin_until_halted()`.
-    unsafe fn start_execution(&mut self) {
-        self.write_usb_command(|v| v.set(0));
-    }
-
-    /// Reset the hardware. The software must then initialize
-    /// it again. 
-    ///
-    /// The hardware must be halted.
-    /// This can be checked with `.is_halted()`,
-    /// and can be waited for with `.spin_until_halted()`.
-    unsafe fn start_reset(&mut self) {
-        self.write_usb_command(|v| v.set(1));
-
-        // Spin until hardware reset is complete
-        loop {
-            let status = self.base.0.read_volatile();
-            if status | 1 << 1 == 0 { break; }
+        pub fn current_connect_status(&self) -> bool {
+            unsafe { self.portsc.get_bit(0) }
         }
-    }
 
-    /// Enables interrupts from the controller.
-    unsafe fn enable_interrupts(&mut self) {
-        self.write_usb_command(|v| v.set(2));
-    }
-
-    /// Disables interrupts from the controller.
-    unsafe fn disable_interrupts(&mut self) {
-        self.write_usb_command(|v| v.reset(2));
-    }
-
-    unsafe fn enable_host_system_errors(&mut self) {
-        self.write_usb_command(|v| v.set(3));
-    }
-
-    unsafe fn disable_host_system_errors(&mut self) {
-        self.write_usb_command(|v| v.reset(3));
-    }
-
-    unsafe fn light_reset(&mut self) {
-        self.write_usb_command(|v| v.set(7));
-
-        // Spin until hardware reset is complete
-        loop {
-            let status = self.base.0.read_volatile();
-            if !status.is_set(7) { break; }
+        pub fn port_enabled(&self) -> bool {
+            unsafe { self.portsc.get_bit(1) }
         }
+
+        // Bit 4 (PR) must be written with a value of 0
+        pub unsafe fn disable_port(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 1;
+            self.portsc.write(val);
+        }
+
+        pub fn over_current_active(&self) -> bool {
+            unsafe { self.portsc.get_bit(3) }
+        }
+
+        pub fn port_reset_status(&self) -> bool {
+            unsafe { self.portsc.get_bit(4) }
+        }
+
+        pub unsafe fn reset_port(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 4;
+            self.portsc.write(val);
+        }
+
+        pub fn port_link_state(&self) -> u8 {
+            (unsafe { self.portsc.read() } >> 5 & 0xF) as u8
+        }
+
+        pub unsafe fn set_port_link_state(&mut self, state: u8) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val &= !(0xF << 5);
+            val |= (state as u32 & 0xF) << 5;
+            // Also set LWS so that the write is not ignored
+            val |= 1 << 16;
+            self.portsc.write(val);
+        }
+
+        pub fn port_power(&self) -> bool {
+            unsafe { self.portsc.get_bit(9) }
+        }
+
+        pub unsafe fn set_port_power(&mut self, status: bool) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            if status {
+                val |= 1 << 9;
+            } else {
+                val &= !(1 << 9);
+            }
+            self.portsc.write(val);
+        }
+
+        pub fn port_speed(&self) -> u8 {
+            (unsafe { self.portsc.read() } >> 10 & 0xF) as u8
+        }
+
+        pub fn port_indicator(&self) -> u8 {
+            (unsafe { self.portsc.read() } >> 14 & 0b11) as u8
+        }
+
+        pub unsafe fn set_port_indicator(&mut self, status: u8) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val &= !(0b11 << 14);
+            val |= (status as u32 & 0b11) << 14;
+            self.portsc.write(val);
+        }
+
+        pub fn connect_status_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(17) }
+        }
+
+        pub unsafe fn clear_connect_status_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 17;
+            self.portsc.write(val);
+        }
+
+        pub fn port_enable_disable_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(18) }
+        }
+
+        pub unsafe fn clear_port_enable_disable_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 18;
+            self.portsc.write(val);
+        }
+
+        pub fn warm_port_reset_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(19) }
+        }
+
+        pub unsafe fn clear_warm_port_reset_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 19;
+            self.portsc.write(val);
+        }
+
+        pub fn over_current_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(20) }
+        }
+
+        pub unsafe fn clear_over_current_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 20;
+            self.portsc.write(val);
+        }
+
+        pub fn port_reset_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(21) }
+        }
+
+        pub unsafe fn clear_port_reset_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 21;
+            self.portsc.write(val);
+        }
+
+        pub fn port_link_state_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(22) }
+        }
+
+        pub unsafe fn clear_port_link_state_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 22;
+            self.portsc.write(val);
+        }
+
+        pub fn port_config_error_change(&self) -> bool {
+            unsafe { self.portsc.get_bit(23) }
+        }
+
+        pub unsafe fn clear_port_config_error_change(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 23;
+            self.portsc.write(val);
+        }
+
+        pub fn cold_attach_status(&self) -> bool {
+            unsafe { self.portsc.get_bit(24) }
+        }
+
+        pub fn wake_on_connect_enabled(&self) -> bool {
+            unsafe { self.portsc.get_bit(25) }
+        }
+
+        pub unsafe fn set_wake_on_connect_enabled(&mut self, status: bool) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            if status {
+                val |= 1 << 25;
+            } else {
+                val &= !(1 << 25);
+            }
+            self.portsc.write(val);
+        }
+
+        pub fn wake_on_disconnect_enabled(&self) -> bool {
+            unsafe { self.portsc.get_bit(26) }
+        }
+
+        pub unsafe fn set_wake_on_disconnect_enabled(&mut self, status: bool) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            if status {
+                val |= 1 << 26;
+            } else {
+                val &= !(1 << 26);
+            }
+            self.portsc.write(val);
+        }
+
+        pub fn wake_on_over_current_enabled(&self) -> bool {
+            unsafe { self.portsc.get_bit(27) }
+        }
+
+        pub unsafe fn set_wake_on_over_current_enabled(&mut self, status: bool) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            if status {
+                val |= 1 << 27;
+            } else {
+                val &= !(1 << 27);
+            }
+            self.portsc.write(val);
+        }
+
+        pub fn device_removable(&self) -> bool {
+            unsafe { self.portsc.get_bit(30) }
+        }
+
+        pub unsafe fn warm_reset_port(&mut self) {
+            let mut val = self.portsc.read();
+            val &= Self::PORTSC_PMASK;
+            val |= 1 << 31;
+            self.portsc.write(val);
+        }
+
+        // portpmsc - usb3
+
+        pub fn u1_timeout(&self) -> u8 {
+            (unsafe { self.portpmsc.read() } & 0xFF) as u8
+        }
+
+        pub unsafe fn set_u1_timeout(&mut self, status: u8) {
+            let mut val = self.portpmsc.read();
+            val &= !0xFF;
+            val |= status as u32;
+            self.portpmsc.write(val);
+        }
+
+        pub fn u2_timeout(&self) -> u16 {
+            (unsafe { self.portpmsc.read() } >> 8 & 0xFFFF) as u16
+        }
+
+        pub unsafe fn set_u2_timeout(&mut self, status: u16) {
+            let mut val = self.portpmsc.read();
+            val &= !(0xFFFF << 8);
+            val |= (status as u32) << 8;
+            self.portpmsc.write(val);
+        }
+
+        pub fn force_link_pm_accept(&self) -> bool {
+            unsafe { self.portpmsc.get_bit(16) }
+        }
+
+        pub unsafe fn set_force_link_pm_accept(&mut self, status: bool) {
+            let mut val = self.portpmsc.read();
+            if status {
+                val |= 1 << 16;
+            } else {
+                val &= !(1 << 16);
+            }
+            self.portpmsc.write(val);
+        }
+
+        // portpmsc - usb2
+
+        pub fn l1_status(&self) -> u8 {
+            (unsafe { self.portpmsc.read() } & 0b111) as u8
+        }
+
+        pub fn remote_wake_enabled(&self) -> bool {
+            unsafe { self.portpmsc.get_bit(3) }
+        }
+
+        pub unsafe fn set_remote_wake_enabled(&mut self, status: bool) {
+            let mut val = self.portpmsc.read();
+            if status {
+                val |= 1 << 3;
+            } else {
+                val &= !(1 << 3);
+            }
+            self.portpmsc.write(val);
+        }
+
+        pub fn best_effor_service_latency(&self) -> u8 {
+            (unsafe { self.portpmsc.read() } >> 4 & 0xF) as u8
+        }
+
+        pub unsafe fn set_best_effort_service_latency(&mut self, status: u8) {
+            let mut val = self.portpmsc.read();
+            val &= !(0xF << 4);
+            val |= (status as u32) << 4;
+            self.portpmsc.write(val);
+        }
+
+        pub fn l1_device_slot(&self) -> u8 {
+            (unsafe { self.portpmsc.read() } >> 8 & 0xFF) as u8
+        }
+
+        pub unsafe fn set_l1_device_slot(&mut self, status: u8) {
+            let mut val = self.portpmsc.read();
+            val &= !(0xFF << 8);
+            val |= (status as u32) << 8;
+            self.portpmsc.write(val);
+        }
+
+        pub fn hardware_lpm_enabled(&self) -> bool {
+            unsafe { self.portpmsc.get_bit(16) }
+        }
+
+        pub unsafe fn set_hardware_lmp_enabled(&mut self, status: bool) {
+            let mut val = self.portpmsc.read();
+            if status {
+                val |= 1 << 16;
+            } else {
+                val &= !(1 << 16);
+            }
+            self.portpmsc.write(val);
+        }
+
+        pub fn port_test_control(&self) -> u8 {
+            (unsafe { self.portpmsc.read() } >> 28) as u8
+        }
+
+        pub unsafe fn set_port_test_control(&mut self, status: u8) {
+            let mut val = self.portpmsc.read();
+            val &= !(0xF << 28);
+            val |= (status as u32) << 28;
+            self.portpmsc.write(val);
+        }
+
+        // portli - usb3
+
+        pub fn link_error_count(&self) -> u16 {
+            (unsafe { self.portli.read() } & 0xFFFF) as u16
+        }
+
+        pub unsafe fn reset_link_error_count(&mut self) {
+            let mut val = self.portli.read();
+            val &= !0xFFFF;
+            self.portli.write(val);
+        }
+
+        pub fn rx_lane_count(&self) -> u8 {
+            (unsafe { self.portli.read() } >> 16 & 0xF) as u8
+        }
+
+        pub fn tx_lane_count(&self) -> u8 {
+            (unsafe { self.portli.read() } >> 20 & 0xF) as u8
+        }
+
+        // NOTE: The documentation is not clear where
+        // PORTEXSC is located, so no fuctionality bound
+        // to that register is made available.
+        
+        // PORTHLPMC is currently not made available because
+        // of lazyness.
     }
-
-    unsafe fn save_state(&mut self) {
-        self.write_usb_command(|v| v.set(8));
-
-        // TODO: spin for completion
-    }
-
-    unsafe fn restore_state(&mut self) {
-        self.write_usb_command(|v| v.set(9));
-
-        // TODO: spin for completion
-    }
-
-    unsafe fn enable_wrap_event(&mut self) {
-        self.write_usb_command(|v| v.set(10));
-    }
-
-    unsafe fn disable_wrap_event(&mut self) {
-        self.write_usb_command(|v| v.reset(10));
-    }
-
-    unsafe fn enable_u3_mfindex_stop(&mut self) {
-        self.write_usb_command(|v| v.set(11));
-    }
-
-    unsafe fn disable_u3_mfindex_stop(&mut self) {
-        self.write_usb_command(|v| v.reset(11));
-    }
-
-    unsafe fn enable_cem(&mut self) {
-        self.write_usb_command(|v| v.set(13));
-    }
-
-    unsafe fn disable_cem(&mut self) {
-        self.write_usb_command(|v| v.reset(13));
-    }
-
-    // TODO: add en/disable for bits 14-15?
-
-
-
-    unsafe fn enable_vtio(&mut self) {
-        self.write_usb_command(|v| v.set(16));
-    }
-
-    unsafe fn disable_vtio(&mut self) {
-        self.write_usb_command(|v| v.reset(16));
-    }
-
-
-    // -- USBSTS --
-
-    unsafe fn is_halted(&self) -> bool {
-        self.base.read_offset(4).is_set(0)
-    }
-
-    unsafe fn system_error(&self) -> bool {
-        self.base.read_offset(4).is_set(2)
-    }
-
-    unsafe fn event_interrupt(&self) -> bool {
-        self.base.read_offset(4).is_set(3)
-    }
-
-    unsafe fn clear_event_interrupt(&mut self) {
-        self.base.modify_offset(4, |v| v.set(3));
-    }
-
-    unsafe fn port_change_detected(&self) -> bool {
-        self.base.read_offset(4).is_set(4)
-    }
-
-    unsafe fn clear_port_change_detected(&mut self) {
-        self.base.modify_offset(4, |v| v.set(4));
-    }
-
-    unsafe fn currently_saving(&self) -> bool {
-        self.base.read_offset(4).is_set(8)
-    }
-
-    unsafe fn currently_restoring(&self) -> bool {
-        self.base.read_offset(4).is_set(9)
-    }
-
-    unsafe fn save_restore_error(&self) -> bool {
-        self.base.read_offset(4).is_set(10)
-    }
-
-    unsafe fn controller_ready(&self) -> bool {
-        self.base.read_offset(4).is_reset(11)
-    }
-
-    unsafe fn host_controller_error(&self) -> bool {
-        self.base.read_offset(4).is_set(12)
-    }
-
-    
-    // -- PAGESIZE --
-
-    unsafe fn page_sizes_supported(&self) -> u16 {
-        (self.base.read_offset(8) & 0xFF) as u16
-    }
-
-
-    // -- DNCTRL --
-
-    unsafe fn enable_notification(&self, bit: u8) {
-        self.base.modify_offset(8, |v| v.set(bit));
-    }
-
-    unsafe fn disable_notification(&self, bit: u8) {
-        self.base.modify_offset(8, |v| v.reset(bit));
-    }
-
-
-    // -- CRCR
-
 }
 
 pub struct XhciDriver {
-    pointers: Pointers,
-    max_device_slots: u8,
-    max_interrupters: u16,
-    max_ports: u8,
-    iochronous_scheduling_threshold: u8,
-    erst_max: u8,
-    max_scratchpad_buffers: u16,
-    scratchpad_restore: bool
+    capability: &'static mut Capability,
+    operational: &'static mut Operational,
+    ports: &'static mut [Port]
 }
 
 impl XhciDriver {
-    pub unsafe fn new(base: *mut u32) -> Self {
-        let capabilities = (base as *mut capability::CapabilityRegister).as_mut().unwrap();
+    pub unsafe fn new(mut base: *mut u32) -> Self {
 
-        let device_slots = capabilities.hcsparams1.read(&capability::HcsParams1::NUM_DEVICE_SLOTS);
+        if (base as u64) < 0xFFFFFF80_00000000 {
+            base = (base as u64 | 0xFFFFFF80_00000000) as _;
+        }
 
-        println!("Device slots: {}", device_slots.to_num_device_slots());
+        crate::memory::map_phys_offset(VirtAddr::new(base as u64));
 
-        // let capabilities = Pointer(base);
-        // let cap_length = capabilities.read_offset(0) & 0xFF;
-        // let operational = Pointer(base.add(cap_length as usize / U32_SIZE));
-        // let runtime_offset = capabilities.read_offset(0x18);
-        // let runtime = Pointer(base.add(runtime_offset as usize / U32_SIZE));
-        // let doorbell_offset = capabilities.read_offset(0x14);
-        // let doorbell = Pointer(base.add(doorbell_offset as usize / U32_SIZE));
+        let capability = (base as *mut regs::Capability).as_mut().unwrap();
 
-        // let hcsparams1 = capabilities.read_offset(0x4);
-        // let max_device_slots = (hcsparams1 & 0xFF) as u8;
-        // let max_interrupters = (hcsparams1 >> 8 & 0x7FF) as u16;
-        // let max_ports = (hcsparams1 >> 24 & 0xFF) as u8; 
+        let cap_length = capability.cap_length();
+        let port_count = capability.max_ports();
 
-        // let hcsparams2 = capabilities.read_offset(0x8);
-        // let isochronous_scheduling_threshold = (hcsparams2 & 0xF) as u8;
-        // let erst_max = (hcsparams2 >> 4 & 0xF) as u8;
-        // let scb_hi = (hcsparams2 >> 21 & 0x1F) as u8;
-        // let scratchpad_restore = (hcsparams2 >> 26 & 1) == 1;
-        // let scb_lo = (hcsparams2 >> 27) as u8;
-        // let max_scratchpad_buffers = scb_lo as u16 | (scb_hi as u16) << 5;
+        let operational = ((base as u64 + cap_length as u64) as *mut Operational).as_mut().unwrap();
+        let ports = core::slice::from_raw_parts_mut((base as u64 + cap_length as u64 + 0x400) as *mut Port, port_count as _);
+        
 
-        // let hcsparams3 = capabilities.read_offset(0xC);
-        // let u1_device_exit_latency = (hcsparams3 & 0xFF) as u8;
-        // let u2_device_exit_latency = (hcsparams3 >> 16 & 0xFFFF) as u16;
+        let device_slot_count = capability.max_device_slots();
+        let interrupter_count = capability.max_interrupters();
 
-        // let hccparams1 = capabilities.read_offset(0x10);
-        // let ac64 = hccparams1 & 1 > 0;
-        // let bandwith_negotiation = hccparams1 & (1<<1) > 0;
-        // let context_size = hccparams1 & (1<<2) > 0;
-        // let port_power_control = hccparams1 & (1<<3) > 0;
-        // let port_indicators = hccparams1 & (1<<4) > 0;
-        // let light_hc_reset = hccparams1 & (1<<5) > 0;
-        // let latency_tolerance_messaging = hccparams1 & (1<<6) > 0;
-        // let secondary_sid = hccparams1 & (1<<7) == 0; // inverted
-        // let parse_all_event_data = hccparams1 & (1<<8) > 0;
-        // let stopped_short_packet = hccparams1 & (1<<9) > 0;
-        // let stopped_edtla = hccparams1 & (1<<10) > 0;
-        // let contiguous_frame_id = hccparams1 & (1<<11) > 0;
-        // let max_primary_stream_array_size = (hccparams1 >> 12 & 0xF) as u8;
-        // let xhci_extented_capabilities_offset = (hccparams1 >> 16 & 0xFFFFFF) << 2;
+        println!("Interface version: {:x}", capability.interface_version());
+        println!("Device slot count: {}", device_slot_count);
+        println!("Interrupter count: {}", interrupter_count);
+        println!("Port count: {}", port_count);
 
-        // let hccparams2 = capabilities.read_offset(0x1C);
-        // let u3_entry = hccparams2 & 1 > 0;
-        // let configure_endpoint_command_max_exit_latency_too_large = hccparams2 & (1<<2) > 0;
-        // let force_save_context = hccparams2 & (1<<2) > 0;
-        // let compliance_transition = hccparams2 & (1<<3) > 0;
-        // let large_esit_payload = hccparams2 & (1<<4) > 0;
-        // let configuration_information_capability = hccparams2 & (1<<5) > 0;
-        // let extended_tbc = hccparams2 & (1<<6) > 0;
-        // let extended_tbc_trb_status = hccparams2 & (1<<7) > 0;
-        // let get_set_extended_property = hccparams2 & (1<<8) > 0;
-        // let virtualization_based_trusted_io = hccparams2 & (1<<9) > 0;
+        let mut driver = XhciDriver {
+            capability,
+            operational,
+            ports
+        };
 
-        // let vtio_register_space_offset = hccparams2 >> 12;
+        for port in driver.ports.iter() {
+            if port.current_connect_status() {
+                println!("Found connected USB device!");
+            }
+        }
 
-        todo!()
+        let dcbaap = driver.operational.device_context_base_address_array_pointer();
+        println!("dcbaap: {:#x}", dcbaap);
+
+        driver.initialize();
+        driver
+    }
+
+    pub unsafe fn initialize(&mut self) {
+        while !self.operational.controller_ready() {}
+        println!("Controller ready");
+
+        self.operational.set_max_device_slots_enabled(1);
+        
     }
 }
 

@@ -216,9 +216,12 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                                 // Found XHCI!
                                 set_cfg_addr(addr | 0x10);
                                 let bar0 = read_data() as u64;
+                                let bar0 = bar0 & !0xFFF;
                                 set_cfg_addr(addr | 0x14);
                                 let bar1 = read_data() as u64;
                                 xhci_base = Some(bar1 << 32 | bar0);
+                                println!("xhci_base: {:x}", xhci_base.unwrap());
+                                // loop {}
                             }
                         }
                     }
@@ -418,8 +421,8 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             println!("{:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x}", a, b, c, d, e, f, g, h);
         };
         
-        println!("Press any key to view memmap");
-        wait_for_key(&st);
+        // println!("Press any key to view memmap");
+        // wait_for_key(&st);
         
         let memory_map_size = st.boot_services().memory_map_size();
         let mut memory_map_buffer = Vec::new();
@@ -435,8 +438,8 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
         let frame_count = max_physical / 4096;
         let allocated_frames = alloc::vec![0; (frame_count / 8) as usize];
         
-        println!("Press any key to continue");
-        wait_for_key(&st);
+        // println!("Press any key to continue");
+        // wait_for_key(&st);
         // #[cfg(feature = "wait_for_gdb")]
         // println!("Will wait for GDB after jump");
         // println!("Press any key to jump to kernel");

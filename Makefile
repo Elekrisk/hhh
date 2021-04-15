@@ -32,19 +32,19 @@ all-qemu:
 
 all-debug:
 	cd bootloader && cargo build --release --features wait_for_gdb
-	cd kernel && cargo build --release
+	cd kernel && cargo build
 	$(WSL) dd if=/dev/zero of=disk.fat bs=1M count=100
 	$(WSL) sudo mkfs.vfat disk.fat
 	$(WSL) mmd -i disk.fat ::EFI
 	$(WSL) mmd -i disk.fat ::EFI/BOOT
 	$(WSL) mcopy -i disk.fat target/x86_64-unknown-uefi/release/bootloader.efi ::EFI/BOOT/BOOTX64.EFI
-	$(WSL) mcopy -i disk.fat target/target/release/kernel ::kernel.elf
+	$(WSL) mcopy -i disk.fat target/target/debug/kernel ::kernel.elf
 
 run: all-qemu
-	qemu-system-x86_64 -bios bios.bin disk.fat -no-reboot
+	qemu-system-x86_64 -bios bios.bin disk.fat -no-reboot -device qemu-xhci -device usb-kbd
 
 debug: all-debug
-	qemu-system-x86_64 -bios bios.bin disk.fat -s
+	qemu-system-x86_64 -bios bios.bin disk.fat -s -device qemu-xhci
 	
 install: all
 	cp target/x86_64-unknown-uefi/release/bootloader.efi $(USB)EFI/BOOT/BOOTX64.EFI

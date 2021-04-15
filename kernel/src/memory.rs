@@ -37,7 +37,11 @@ impl FrameAllocator {
     }
 
     pub fn deallocate_frame(&mut self, frame: PhysFrame) {
-        panic!("Deallocation of physical frames not yet supported");
+        let addr = frame.start_address().as_u64();
+        let frame_nr = addr >> 12;
+        let i = frame_nr % 8;
+        let j = frame_nr / 8;
+        self.allocated_frames[i as usize] &= !(1<<j);
     }
 }
 
@@ -195,7 +199,7 @@ static ALLOCATOR: Allocator = Allocator;
 pub struct Allocator;
 
 impl Allocator {
-    const BASE_ADDRESS: u64 = 0xFF800000_00000000;
+    const BASE_ADDRESS: u64 = 0x00008000_00000000;
 }
 
 unsafe impl GlobalAlloc for Allocator {
@@ -265,7 +269,7 @@ trait AsPageTable {
 impl AsPageTable for PageTableEntry {
     unsafe fn as_page_table(&self) -> Option<&PageTable> {
         if !self.is_unused() && self.flags().contains(PageTableFlags::PRESENT) && !self.flags().contains(PageTableFlags::HUGE_PAGE) {
-            Some((self.addr().as_u64() as *const PageTable).as_ref().unwrap())
+            Some(((self.addr().as_u64() | 0xFFFFFF80_00000000) as *const PageTable).as_ref().unwrap())
         } else {
             None
         }
@@ -273,9 +277,21 @@ impl AsPageTable for PageTableEntry {
 
     unsafe fn as_page_table_mut(&mut self) -> Option<&mut PageTable> {
         if !self.is_unused() && self.flags().contains(PageTableFlags::PRESENT) && !self.flags().contains(PageTableFlags::HUGE_PAGE) {
-            Some((self.addr().as_u64() as *mut PageTable).as_mut().unwrap())
+            Some(((self.addr().as_u64() | 0xFFFFFF80_00000000) as *mut PageTable).as_mut().unwrap())
         } else {
             None
         }
     }
+}
+
+pub fn map_phys_offset(virt: VirtAddr) {
+    let phys = PhysAddr::new(virt.as_u64() & 0x0000007F_FFFFFFFF);
+    let mut mapper = MAPPER.lock();
+    if mapper.is_mapped(virt) {
+        return;
+    }
+    let mut frame_allocator = FRAME_ALLOCATOR.lock();
+    unsafe {
+        mapper.map(&mut frame_allocator, virt, PhysFrame::containing_address(phys)).unwrap()
+    };
 }
