@@ -2,8 +2,6 @@ use core::panic::PanicInfo;
 
 use alloc::string::String;
 
-
-
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
     let loc = info.location().unwrap();
@@ -14,8 +12,8 @@ fn panic_handler(info: &PanicInfo) -> ! {
                 Some(v) => *v,
                 None => match info.payload().downcast_ref::<String>() {
                     Some(v) => &v[..],
-                    None => "Box<Any>"
-                }
+                    None => "Box<Any>",
+                },
             };
             println!("{}: Panic: '{}'", loc, msg);
         }

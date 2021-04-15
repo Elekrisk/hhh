@@ -2,7 +2,6 @@ use core::ops::Add;
 
 use x86_64::structures::idt::{InterruptStackFrame, PageFaultErrorCode};
 
-
 pub extern "x86-interrupt" fn alignment_check(_stack_frame: InterruptStackFrame, _error_code: u64) {
     println!("\n");
     loop {}
@@ -28,7 +27,10 @@ pub extern "x86-interrupt" fn divide_error(_stack_frame: InterruptStackFrame) {
     loop {}
 }
 
-pub extern "x86-interrupt" fn general_protection_fault(stack_frame: InterruptStackFrame, error_code: u64) {
+pub extern "x86-interrupt" fn general_protection_fault(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
     println!("\ngeneral_protection_fault\n");
     println!("ss: {:x}", error_code);
     let ip = stack_frame.instruction_pointer;
@@ -66,12 +68,18 @@ pub extern "x86-interrupt" fn overflow(_stack_frame: InterruptStackFrame) {
     loop {}
 }
 
-pub extern "x86-interrupt" fn security_exception(_stack_frame: InterruptStackFrame, _error_code: u64) {
+pub extern "x86-interrupt" fn security_exception(
+    _stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) {
     println!("\nsecurity_exception");
     loop {}
 }
 
-pub extern "x86-interrupt" fn segment_not_present(_stack_frame: InterruptStackFrame, _error_code: u64) {
+pub extern "x86-interrupt" fn segment_not_present(
+    _stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) {
     println!("\nsegment_not_present");
     loop {}
 }
@@ -81,7 +89,10 @@ pub extern "x86-interrupt" fn simd_floating_point(_stack_frame: InterruptStackFr
     loop {}
 }
 
-pub extern "x86-interrupt" fn stack_segment_fault(_stack_frame: InterruptStackFrame, _error_code: u64) {
+pub extern "x86-interrupt" fn stack_segment_fault(
+    _stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) {
     println!("\nstack_segment_fault");
     loop {}
 }
@@ -100,13 +111,25 @@ pub extern "x86-interrupt" fn breakpoint(_stack_frame: InterruptStackFrame) {
     println!("\nbreakpoint");
 }
 
-pub extern "x86-interrupt" fn page_fault(stack_frame: InterruptStackFrame, _error_code: PageFaultErrorCode) {
-    println!("\nPage fault while trying to access 0x{:x}", x86_64::registers::control::Cr2::read());
-    println!("Caused by instruction at 0x{:x}", stack_frame.instruction_pointer);
+pub extern "x86-interrupt" fn page_fault(
+    stack_frame: InterruptStackFrame,
+    _error_code: PageFaultErrorCode,
+) {
+    println!(
+        "\nPage fault while trying to access 0x{:x}",
+        x86_64::registers::control::Cr2::read()
+    );
+    println!(
+        "Caused by instruction at 0x{:x}",
+        stack_frame.instruction_pointer
+    );
     loop {}
 }
 
-pub extern "x86-interrupt" fn double_fault(_stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
+pub extern "x86-interrupt" fn double_fault(
+    _stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) -> ! {
     println!("\ndouble fault");
     loop {}
 }
