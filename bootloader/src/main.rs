@@ -24,13 +24,13 @@ mod panic;
 
 use acpi::{AcpiHandler, PhysicalMapping, mcfg::{Mcfg, McfgEntry}, sdt::Signature};
 use alloc::vec::Vec;
-use common::{Framebuffer, MachineInfo};
+use common::{Framebuffer, MachineInfo, MachineInfoC};
 use elf::{Elf, EntryType, HeaderEntry, SectionType};
 use exceptions::page_fault;
 use uefi::{prelude::*, proto::{console::gop::GraphicsOutput, media::{file::{File, FileAttribute, FileMode, FileType}, fs::SimpleFileSystem}}, table::{boot::{AllocateType, MemoryAttribute, MemoryDescriptor, MemoryType}, cfg::{self, ACPI2_GUID}}};
 use uefi::{Handle, Status, table::{Boot, SystemTable}};
 use log::info;
-use x86_64::{PhysAddr, VirtAddr, instructions, structures::{gdt::{Descriptor, GlobalDescriptorTable}, idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode}, paging::{mapper::UnmapError, Page, FrameAllocator, FrameDeallocator, OffsetPageTable, PageTable, PageTableFlags, Size1GiB, Size2MiB, Size4KiB, frame::{self, PhysFrame}, page_table::PageTableEntry}}};
+use x86_64::{PhysAddr, VirtAddr, instructions, structures::{gdt::{Descriptor, GlobalDescriptorTable}, idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode}, paging::{FrameAllocator, FrameDeallocator, OffsetPageTable, Page, PageSize, PageTable, PageTableFlags, Size1GiB, Size2MiB, Size4KiB, frame::{self, PhysFrame}, mapper::UnmapError, page_table::PageTableEntry}}};
 use core::fmt::Debug;
 extern crate alloc;
 
@@ -121,39 +121,112 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             _reserved: u32,
         }
 
-        let mcfg = unsafe { acpi_tables.get_sdt::<Mcfg>(Signature::MCFG).unwrap().unwrap().virtual_start.as_ref() };
-        let entries = entries(mcfg);
-        println!("MCFG entry count: {}", entries.len());
-        for entry in entries {
-            println!("bus 0x{:x}..=0x{:x}, addr {:x}", entry.bus_number_start, entry.bus_number_end, entry.base_address);
-        }
-        let base = entries[0].base_address;
-
-        let mut xhci_cfg_base = None;
-        for i in 0.. {
-            let base = base + (i << 12);
-            if base > 0xffffffff { break; } 
-            let base = base as *const u32;
-            let info = unsafe { base.add(2).read() };
-            if info != !0u32 && info != 0 {
-                let class = info >> 24 & 0xFF;
-                let subclass = info >> 16 & 0xFF;
-                let function = info >> 8 & 0xFF;
-                let revision = info & 0xFF;
-                if class == 0xC && subclass == 0x3 && function == 0x30 {
-                    xhci_cfg_base = Some(base);
-                    break;
+        let xhci_base = if let Some(mcfg) = unsafe { acpi_tables.get_sdt::<Mcfg>(Signature::MCFG).unwrap() } {
+            let mcfg = unsafe { mcfg.virtual_start.as_ref() };
+            let entries = entries(mcfg);
+            println!("MCFG entry count: {}", entries.len());
+            for entry in entries {
+                println!("bus 0x{:x}..=0x{:x}, addr {:x}", entry.bus_number_start, entry.bus_number_end, entry.base_address);
+            }
+            let base = entries[0].base_address;
+            
+            let mut xhci_cfg_base = None;
+            for i in 0.. {
+                let base = base + (i << 12);
+                if base > 0xffffffff { break; } 
+                let base = base as *const u32;
+                let info = unsafe { base.add(2).read() };
+                if info != !0u32 && info != 0 {
+                    let class = info >> 24 & 0xFF;
+                    let subclass = info >> 16 & 0xFF;
+                    let function = info >> 8 & 0xFF;
+                    let revision = info & 0xFF;
+                    if class == 0xC && subclass == 0x3 && function == 0x30 {
+                        xhci_cfg_base = Some(base);
+                        break;
+                    }
                 }
             }
-        }
-        let xhci_cfg_base = xhci_cfg_base.expect("No USB 3 controller found");
+            let xhci_cfg_base = xhci_cfg_base.expect("No USB 3 controller found");
+            
+            unsafe {
+                let bar0 = xhci_cfg_base.add(4).read() as u64;
+                let bar1 = xhci_cfg_base.add(5).read() as u64;
+                bar1 << 32 | bar0
+            }
+        } else {
+            println!("PCIe not supported");
+            
+            fn set_cfg_addr(addr: u32) {
+                unsafe {
+                    asm!(
+                        "mov dx, 0xCF8",
+                        "out dx, eax",
+                        in("eax") addr,
+                        lateout("dx") _,
+                        options(nostack)
+                    );
+                }
+            }
 
-        let xhci_base = unsafe {
-            let bar0 = xhci_cfg_base.add(4).read() as u64;
-            let bar1 = xhci_cfg_base.add(5).read() as u64;
-            bar1 << 32 | bar0
+            fn read_data() -> u32 {
+                unsafe {
+                    let mut out;
+                    asm!(
+                        "mov dx, 0xCFC",
+                        "in eax, dx",
+                        out("eax") out,
+                        lateout("dx") _,
+                        options(nostack)
+                    );
+                    out
+                }
+            }
+            fn write_data(data: u32) {
+                unsafe {
+                    asm!(
+                        "mov dx, 0xCFC",
+                        "out dx, eax",
+                        in("eax") data,
+                        lateout("dx") _,
+                        options(nostack)
+                    );
+                }
+            }
+
+            let bus = 0xC;
+            let slot = 0x3;
+            let func = 0x30;
+
+            let mut xhci_base = None;
+            for bus in 0..256 {
+                for device in 0..32 {
+                    for function in 0..8 {
+                        let addr = 0x80000000 | bus << 16 | device << 11 | function << 8;
+                        set_cfg_addr(addr);
+                        let data = read_data();
+                        if data != 0xFFFFFFFF {
+                            // Device found!
+                            set_cfg_addr(addr | 0x8);
+                            let data = read_data();
+                            let class = data >> 24 & 0xFF;
+                            let subclass = data >> 16 & 0xFF;
+                            let function = data >> 8 & 0xFF;
+                            if class == 0xC && subclass == 0x3 && function == 0x30 {
+                                // Found XHCI!
+                                set_cfg_addr(addr | 0x10);
+                                let bar0 = read_data() as u64;
+                                set_cfg_addr(addr | 0x14);
+                                let bar1 = read_data() as u64;
+                                xhci_base = Some(bar1 << 32 | bar0);
+                            }
+                        }
+                    }
+                }
+            }
+            xhci_base.expect("No USB 3 controller found")
         };
-
+        
         
         // let fs_proto = system_table.boot_services().locate_protocol::<SimpleFileSystem>().unwrap().unwrap();
         let fs_proto = st.boot_services().get_image_file_system(image_handle).unwrap().unwrap();
@@ -351,9 +424,16 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
         let memory_map_size = st.boot_services().memory_map_size();
         let mut memory_map_buffer = Vec::new();
         memory_map_buffer.resize(memory_map_size + 256, 0);
-        for entry in st.boot_services().memory_map(&mut memory_map_buffer).unwrap().unwrap().1.filter(|m| m.ty == MemoryType::MMIO || m.ty == MemoryType::MMIO_PORT_SPACE) {
+        let mut max_physical = 0;
+        for entry in st.boot_services().memory_map(&mut memory_map_buffer).unwrap().unwrap().1 {
             println!("{:?} phys {:x} virt {:x} page_count {}", entry.ty, entry.phys_start, entry.virt_start, entry.page_count);
+            if entry.phys_start + entry.page_count * 4096 > max_physical {
+                max_physical = entry.phys_start + entry.page_count * 4096;
+            }
         }
+
+        let frame_count = max_physical / 4096;
+        let allocated_frames = alloc::vec![0; (frame_count / 8) as usize];
         
         println!("Press any key to continue");
         wait_for_key(&st);
@@ -363,13 +443,14 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
         // wait_for_key(&system_table);
         
         // println!("Jump!");
-        
+
         let machine_info = MachineInfo {
             framebuffer,
-            xhci_base
+            xhci_base,
+            allocated_frames: allocated_frames.leak()
         };
 
-        (unsafe { core::mem::transmute::<_, extern "sysv64" fn(MachineInfo)>(virt_entry) }, machine_info, kernel_addresses.leak())
+        (unsafe { core::mem::transmute::<_, extern "sysv64" fn(MachineInfoC)>(virt_entry) }, machine_info, kernel_addresses.leak())
     };
     
     let memmapsize = st.boot_services().memory_map_size();
@@ -427,10 +508,15 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             pml4t[511].set_addr(pdpt_addr, flags);
             let pdpt = (pdpt_addr.as_u64() as *mut PageTable).as_mut().unwrap();
 
-            let physical_cap = memmap.iter().map(|m| {
+            let mut physical_cap = memmap.iter().map(|m| {
                 if m.phys_start + m.page_count * _4K > 16*_1G { println!("mem of type {:?}: {:x}", m.ty, m.phys_start); }
                 m.phys_start + m.page_count * 4096
             }).max().unwrap();
+            if machine_info.framebuffer.ptr as u64 > physical_cap {
+                println!("Framebuffer is above physical cap, extending physical cap...");
+                let framebuffer = &machine_info.framebuffer;
+                physical_cap = framebuffer.ptr as u64 + framebuffer.resolution_y as u64 * framebuffer.stride as u64;
+            }
             println!("Physical cap: 0x{:x} : {} B, {} KB, {} MB, {} GB", physical_cap, physical_cap, physical_cap >> 10, physical_cap >> 20, physical_cap >> 30);
             let gig_pages = (physical_cap + _1G - 1) / _1G;
             println!("1G pages: {}", gig_pages);
@@ -444,11 +530,23 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                 }
             }
 
-            let pdpt_addr = PAGE_ALLOCATOR.allocate_frame().unwrap().start_address();
-            pml4t[0].set_addr(pdpt_addr, flags);
-            let pdpt = (pdpt_addr.as_u64() as *mut PageTable).as_mut().unwrap();
-            for (i, entry) in pdpt.iter_mut().take((gig_pages + 2) as _).enumerate() {
-                entry.set_addr(PhysAddr::new(i as u64 * _1G), flags | PageTableFlags::HUGE_PAGE);
+            println!("mapping used memory");
+            for entry in &memmap {
+                match entry.ty {
+                    MemoryType::CONVENTIONAL |
+                    MemoryType::RESERVED |
+                    MemoryType::UNUSABLE => {},
+                    _ => {
+                        let start = entry.phys_start;
+                        let page_count = entry.page_count;
+                        println!("Entry to map: {:x}..{:x}", start, start+(page_count<<12));
+                        let start_page = start >> 12;
+                        for page in start_page..start_page + page_count {
+                            map(pml4t, VirtAddr::new(page << 12), PhysFrame::from_start_address(PhysAddr::new(page << 12)).unwrap()).unwrap();
+                            machine_info.allocated_frames[(page / 8) as usize] |= 1 << (page % 8);
+                        }
+                    }
+                }
             }
 
             println!("maping kernel");
@@ -485,47 +583,6 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             entry.virt_start = idx2virt(511, 0, 0, 0).as_u64() | entry.phys_start;
         }
 
-
-        // println!("start");
-        // for entry in page_table.level_4_table().iter_mut().take(256) {
-        //     if !entry.is_unused() /* Level 4 entry */ {
-        //         let mut table_3_empty = true;
-        //         println!("    start lvl3");
-        //         for entry in (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap().iter_mut() {
-        //             if !entry.is_unused() /* Level 3 entry */ {
-        //                 let mut table_2_empty = true;
-        //                 for entry in (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap().iter_mut() {
-        //                     if !entry.is_unused() /* Level 2 entry */ {
-        //                         let mut table_1_empty = true;
-        //                         for entry in (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap().iter_mut() {
-        //                             if !entry.is_unused() /* Level 1 entry */ {
-        //                                 table_1_empty = false;
-        //                                 break;
-        //                             }
-        //                         }
-
-        //                         if table_1_empty {
-        //                             entry.set_unused();
-        //                         } else {
-        //                             table_2_empty = false;
-        //                         }
-        //                     }
-        //                 }
-
-        //                 if table_2_empty {
-        //                     entry.set_unused();
-        //                 } else {
-        //                     table_3_empty = false;
-        //                 }
-        //             }
-        //         }
-
-        //         if table_3_empty {
-        //             entry.set_unused();
-        //         }
-        //     }
-        // }
-
         st.runtime_services().set_virtual_address_map(&mut memmap).unwrap().unwrap();
 
         assert_mapped(pml4t, VirtAddr::new(entry as u64), true);
@@ -535,7 +592,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
         let mut sp;
         asm!("mov {}, rsp", lateout(reg) sp);
         assert_mapped(pml4t, VirtAddr::new(sp), true);
-        assert_mapped(pml4t, VirtAddr::new(machine_info.framebuffer.ptr as u64), true);
+        assert_mapped(pml4t, VirtAddr::new(machine_info.framebuffer.ptr as u64 | idx2virt(511, 0, 0, 0).as_u64()), true);
 
 
         let addr = PhysAddr::new((&PAGE_TABLE_4) as *const PageTable as u64);
@@ -555,11 +612,13 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
         println!("flags of new pml4e0.pdpe0: {:?}", pml4t[0].as_page_table().unwrap()[0].flags());
 
         println!("aaaa");
-        // framebuffer.ptr = (framebuffer.ptr as u64 | idx2virt(511, 0, 0, 0).as_u64()) as _;
-        // writer::update_ptr(framebuffer.ptr);
+        machine_info.framebuffer.ptr = (machine_info.framebuffer.ptr as u64 | idx2virt(511, 0, 0, 0).as_u64()) as _;
+        common::writer::update_ptr(machine_info.framebuffer.ptr);
         x86_64::registers::control::Cr3::write(frame, x86_64::registers::control::Cr3Flags::empty());
         println!("Loading new page table succeeded");
     }
+
+    let machine_info = machine_info.into();
 
     wait_debug();
 
@@ -570,6 +629,42 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
     println!("DONE");
 
     loop {}
+}
+
+unsafe fn map(pml4: &mut PageTable, virt: VirtAddr, frame: PhysFrame) -> Result<(), &'static str> {
+    let (idx4, idx3, idx2, idx1) = virt2idx(virt);
+    
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+    if pml4[idx4].is_unused() {
+        let pdp_addr = PAGE_ALLOCATOR.allocate_frame().unwrap().start_address();
+        pml4[idx4].set_addr(pdp_addr, flags);
+    }
+    let pdp = pml4[idx4].as_page_table_mut().unwrap();
+
+    if pdp[idx3].is_unused() {
+        let pd_addr = PAGE_ALLOCATOR.allocate_frame().unwrap().start_address();
+        pdp[idx3].set_addr(pd_addr, flags);
+    } else if pdp[idx3].flags().contains(PageTableFlags::HUGE_PAGE) {
+        return Err("Trying to map to pdp entry containing a 1G page");
+    }
+    let pd = pdp[idx3].as_page_table_mut().unwrap();
+    
+    if pd[idx2].is_unused() {
+        let pt_addr = PAGE_ALLOCATOR.allocate_frame().unwrap().start_address();
+        pd[idx2].set_addr(pt_addr, flags);
+    } else if pd[idx2].flags().contains(PageTableFlags::HUGE_PAGE) {
+        return Err("Trying to map to pdp entry containing a 2M page");
+    }
+    let pt = pd[idx2].as_page_table_mut().unwrap();
+
+    if pt[idx1].is_unused() {
+        pt[idx1].set_frame(frame, flags);
+    } else {
+        return Err("Trying to map to already existing page");
+    }
+
+    Ok(())
 }
 
 trait AsPageTable {
@@ -705,6 +800,34 @@ impl Pager {
 fn wait_for_key(st: &SystemTable<Boot>) {
     st.stdin().reset(false).unwrap().unwrap();
     st.boot_services().wait_for_event(&mut [st.stdin().wait_for_key_event()]).unwrap().unwrap();
+}
+
+fn is_mapped(pml4: &mut PageTable, addr: VirtAddr) -> bool {
+    let (idx4, idx3, idx2, idx1) = virt2idx(addr);
+    unsafe {
+        if !pml4[idx4].flags().contains(PageTableFlags::PRESENT) {
+            return false;
+        }
+        let page_table_3 = (pml4[idx4].addr().as_u64() as *mut PageTable).as_mut().unwrap();
+        if !page_table_3[idx3].flags().contains(PageTableFlags::PRESENT) {
+            return false;
+        }
+        if page_table_3[idx3].flags().contains(PageTableFlags::HUGE_PAGE) {
+            return true;
+        }
+        let page_table_2 = (page_table_3[idx3].addr().as_u64() as *mut PageTable).as_mut().unwrap();
+        if !page_table_2[idx2].flags().contains(PageTableFlags::PRESENT) {
+            return false;
+        }
+        if page_table_2[idx2].flags().contains(PageTableFlags::HUGE_PAGE) {
+            return true;
+        }
+        let page_table_1 = (page_table_2[idx2].addr().as_u64() as *mut PageTable).as_mut().unwrap();
+        if !page_table_1[idx1].flags().contains(PageTableFlags::PRESENT) {
+            return false;
+        }
+    }
+    true
 }
 
 fn assert_mapped(pml4: &PageTable, addr: VirtAddr, write_success: bool) {

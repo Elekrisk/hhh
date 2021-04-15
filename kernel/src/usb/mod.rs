@@ -1,1 +1,1 @@
-mod xhci;
+pub mod xhci;

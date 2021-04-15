@@ -10,3 +10,5 @@ edition = "2018"
 rlibc = "1"
 common = { path = "../common" }
 x86_64 = "0.14"
+spin = "0.9"
+num-traits = { version = "0.2", default-features = false }

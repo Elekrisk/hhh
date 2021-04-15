@@ -1,4 +1,7 @@
 
+mod datastructures;
+mod register;
+
 const U32_SIZE: usize = core::mem::size_of::<u32>();
 
 #[derive(Clone, Copy)]
@@ -30,6 +33,174 @@ impl Pointer {
         ptr.write_volatile(value);
     }
 }
+
+mod capability {
+    use core::mem::Discriminant;
+
+    use super::register::{RegisterValue, MaskInfo, Register};
+
+    #[repr(C)]
+    pub struct CapabilityRegister {
+        pub first_register: Register<u32, CapabilityRegister1>,
+        pub hcsparams1: Register<u32, HcsParams1>,
+        pub hcsparams2: Register<u32, HcsParams2>,
+    }
+
+    pub enum CapabilityRegister1 {
+        CapabilityLength(u8),
+        InterfaceVersion(u16)
+    }
+
+    impl CapabilityRegister1 {
+        pub const CAP_LENGTH: Self = Self::CapabilityLength(0);
+        pub const INT_VERSION: Self = Self::InterfaceVersion(0);
+    }
+
+    impl RegisterValue<u32> for CapabilityRegister1 {
+        fn from_value(val: u32, dummy_value: &Self) -> Self {
+            match dummy_value {
+                Self::CapabilityLength(_) => Self::CapabilityLength(val as _),
+                Self::InterfaceVersion(_) => Self::InterfaceVersion(val as _)
+            }
+        }
+
+        fn to_value(&self) -> u32 {
+            match self {
+                Self::CapabilityLength(v) => *v as _,
+                Self::InterfaceVersion(v) => *v as _
+            }
+        }
+
+        fn bits(&self) -> MaskInfo {
+            match self {
+                Self::CapabilityLength(_) => MaskInfo::new(8, 0),
+                Self::InterfaceVersion(_) => MaskInfo::new(16, 16),
+            }
+        }
+    }
+
+    pub enum HcsParams1 {
+        NumberOfDeviceSlots(u8),
+        NumberOfInterrupters(u16),
+        NumberOfPorts(u8)
+    }
+
+    impl HcsParams1 {
+        pub const NUM_DEVICE_SLOTS: Self = Self::NumberOfDeviceSlots(0);
+        pub const NUM_INTERRUPTERS: Self = Self::NumberOfInterrupters(0);
+        pub const NUM_PORTS: Self = Self::NumberOfPorts(0);
+
+        pub fn to_num_device_slots(self) -> u8 {
+            if let Self::NumberOfDeviceSlots(v) = self {
+                v
+            } else {
+                panic!("Variant wasn't NumberOfDeviceSlots");
+            }
+        }
+        pub fn to_num_interrupters(self) -> u16 {
+            if let Self::NumberOfInterrupters(v) = self {
+                v
+            } else {
+                panic!("Variant wasn't NumberOfInterrupters");
+            }
+        }
+        pub fn to_num_ports(self) -> u8 {
+            if let Self::NumberOfPorts(v) = self {
+                v
+            } else {
+                panic!("Variant wasn't NumberOfPorts");
+            }
+        }
+    }
+
+    impl RegisterValue<u32> for HcsParams1 {
+        fn from_value(val: u32, dummy_value: &Self) -> Self {
+            match dummy_value {
+                HcsParams1::NumberOfDeviceSlots(_) => Self::NumberOfDeviceSlots(val as _),
+                HcsParams1::NumberOfInterrupters(_) => Self::NumberOfInterrupters(val as _),
+                HcsParams1::NumberOfPorts(_) => Self::NumberOfPorts(val as _),
+            }
+        }
+
+        fn to_value(&self) -> u32 {
+            match self {
+                HcsParams1::NumberOfDeviceSlots(v) => *v as _,
+                HcsParams1::NumberOfInterrupters(v) => *v as _,
+                HcsParams1::NumberOfPorts(v) => *v as _,
+            }
+        }
+
+        fn bits(&self) -> MaskInfo {
+            match self {
+                HcsParams1::NumberOfDeviceSlots(_) => MaskInfo::new(8, 0),
+                HcsParams1::NumberOfInterrupters(_) => MaskInfo::new(10, 8),
+                HcsParams1::NumberOfPorts(_) => MaskInfo::new(8, 24)
+            }
+        }
+    }
+
+    pub enum HcsParams2 {
+        IsochronousSchedulingThreshold(IstValue),
+        EventRingSegmentTableMax(u8),
+        MaxScratchpadBuffersHigh(u8),
+        ScratchpadRestore(bool),
+        MaxScratchpadBuffersLow(u8)
+    }
+
+    pub enum IstValue {
+        Frames(u8),
+        MicroFrames(u8)
+    }
+
+    impl HcsParams2 {
+        pub const IST: Self = Self::IsochronousSchedulingThreshold(IstValue::MicroFrames(0));
+        pub const ERST_MAX: Self = Self::EventRingSegmentTableMax(0);
+        pub const MSB_HI: Self = Self::MaxScratchpadBuffersHigh(0);
+        pub const SPR: Self = Self::ScratchpadRestore(false);
+        pub const MSB_LO: Self = Self::MaxScratchpadBuffersLow(0);
+    }
+
+    impl RegisterValue<u32> for HcsParams2 {
+        fn from_value(val: u32, dummy_value: &Self) -> Self {
+            match dummy_value {
+                HcsParams2::IsochronousSchedulingThreshold(_) => HcsParams2::IsochronousSchedulingThreshold(match (val >> 3) & 1 {
+                    0 => IstValue::MicroFrames(val as u8 & 0b11),
+                    1 => IstValue::Frames(val as u8 & 0b11),
+                    _ => unreachable!()
+                }),
+                HcsParams2::EventRingSegmentTableMax(_) => HcsParams2::EventRingSegmentTableMax(val as _),
+                HcsParams2::MaxScratchpadBuffersHigh(_) => HcsParams2::MaxScratchpadBuffersHigh(val as _),
+                HcsParams2::ScratchpadRestore(_) => HcsParams2::ScratchpadRestore(val > 1),
+                HcsParams2::MaxScratchpadBuffersLow(_) => HcsParams2::MaxScratchpadBuffersLow(val as _),
+            }
+        }
+
+        fn to_value(&self) -> u32 {
+            match self {
+                HcsParams2::IsochronousSchedulingThreshold(v) => match v {
+                    IstValue::Frames(v) => *v as u32 | 1<<3,
+                    IstValue::MicroFrames(v) => *v as _
+                }
+                HcsParams2::EventRingSegmentTableMax(v) => *v as _,
+                HcsParams2::MaxScratchpadBuffersHigh(v) => *v as _,
+                HcsParams2::ScratchpadRestore(v) => *v as _,
+                HcsParams2::MaxScratchpadBuffersLow(v) => *v as _
+            }
+        }
+
+        fn bits(&self) -> MaskInfo {
+            match self {
+                HcsParams2::IsochronousSchedulingThreshold(_) => MaskInfo::new(4, 0),
+                HcsParams2::EventRingSegmentTableMax(_) => MaskInfo::new(4, 4),
+                HcsParams2::MaxScratchpadBuffersHigh(_) => MaskInfo::new(5, 21),
+                HcsParams2::ScratchpadRestore(_) => MaskInfo::new(1, 26),
+                HcsParams2::MaxScratchpadBuffersLow(_) => MaskInfo::new(5, 27),
+            }
+        }
+    }
+}
+
+
 
 struct Pointers {
     capability: *mut u32,
@@ -226,7 +397,6 @@ impl Operationals {
 
     // -- CRCR
 
-    unsafe fn 
 }
 
 pub struct XhciDriver {
@@ -242,60 +412,66 @@ pub struct XhciDriver {
 
 impl XhciDriver {
     pub unsafe fn new(base: *mut u32) -> Self {
-        let capabilities = Pointer(base);
-        let cap_length = capabilities.read_offset(0) & 0xFF;
-        let operational = Pointer(base.add(cap_length as usize / U32_SIZE));
-        let runtime_offset = capabilities.read_offset(0x18);
-        let runtime = Pointer(base.add(runtime_offset as usize / U32_SIZE));
-        let doorbell_offset = capabilities.read_offset(0x14);
-        let doorbell = Pointer(base.add(doorbell_offset as usize / U32_SIZE));
+        let capabilities = (base as *mut capability::CapabilityRegister).as_mut().unwrap();
 
-        let hcsparams1 = capabilities.read_offset(0x4);
-        let max_device_slots = (hcsparams1 & 0xFF) as u8;
-        let max_interrupters = (hcsparams1 >> 8 & 0x7FF) as u16;
-        let max_ports = (hcsparams1 >> 24 & 0xFF) as u8; 
+        let device_slots = capabilities.hcsparams1.read(&capability::HcsParams1::NUM_DEVICE_SLOTS);
 
-        let hcsparams2 = capabilities.read_offset(0x8);
-        let isochronous_scheduling_threshold = (hcsparams2 & 0xF) as u8;
-        let erst_max = (hcsparams2 >> 4 & 0xF) as u8;
-        let scb_hi = (hcsparams2 >> 21 & 0x1F) as u8;
-        let scratchpad_restore = (hcsparams2 >> 26 & 1) == 1;
-        let scb_lo = (hcsparams2 >> 27) as u8;
-        let max_scratchpad_buffers = scb_lo as u16 | (scb_hi as u16) << 5;
+        println!("Device slots: {}", device_slots.to_num_device_slots());
 
-        let hcsparams3 = capabilities.read_offset(0xC);
-        let u1_device_exit_latency = (hcsparams3 & 0xFF) as u8;
-        let u2_device_exit_latency = (hcsparams3 >> 16 & 0xFFFF) as u16;
+        // let capabilities = Pointer(base);
+        // let cap_length = capabilities.read_offset(0) & 0xFF;
+        // let operational = Pointer(base.add(cap_length as usize / U32_SIZE));
+        // let runtime_offset = capabilities.read_offset(0x18);
+        // let runtime = Pointer(base.add(runtime_offset as usize / U32_SIZE));
+        // let doorbell_offset = capabilities.read_offset(0x14);
+        // let doorbell = Pointer(base.add(doorbell_offset as usize / U32_SIZE));
 
-        let hccparams1 = capabilities.read_offset(0x10);
-        let ac64 = hccparams1 & 1 > 0;
-        let bandwith_negotiation = hccparams1 & (1<<1) > 0;
-        let context_size = hccparams1 & (1<<2) > 0;
-        let port_power_control = hccparams1 & (1<<3) > 0;
-        let port_indicators = hccparams1 & (1<<4) > 0;
-        let light_hc_reset = hccparams1 & (1<<5) > 0;
-        let latency_tolerance_messaging = hccparams1 & (1<<6) > 0;
-        let secondary_sid = hccparams1 & (1<<7) == 0; // inverted
-        let parse_all_event_data = hccparams1 & (1<<8) > 0;
-        let stopped_short_packet = hccparams1 & (1<<9) > 0;
-        let stopped_edtla = hccparams1 & (1<<10) > 0;
-        let contiguous_frame_id = hccparams1 & (1<<11) > 0;
-        let max_primary_stream_array_size = (hccparams1 >> 12 & 0xF) as u8;
-        let xhci_extented_capabilities_offset = (hccparams1 >> 16 & 0xFFFFFF) << 2;
+        // let hcsparams1 = capabilities.read_offset(0x4);
+        // let max_device_slots = (hcsparams1 & 0xFF) as u8;
+        // let max_interrupters = (hcsparams1 >> 8 & 0x7FF) as u16;
+        // let max_ports = (hcsparams1 >> 24 & 0xFF) as u8; 
 
-        let hccparams2 = capabilities.read_offset(0x1C);
-        let u3_entry = hccparams2 & 1 > 0;
-        let configure_endpoint_command_max_exit_latency_too_large = hccparams2 & (1<<2) > 0;
-        let force_save_context = hccparams2 & (1<<2) > 0;
-        let compliance_transition = hccparams2 & (1<<3) > 0;
-        let large_esit_payload = hccparams2 & (1<<4) > 0;
-        let configuration_information_capability = hccparams2 & (1<<5) > 0;
-        let extended_tbc = hccparams2 & (1<<6) > 0;
-        let extended_tbc_trb_status = hccparams2 & (1<<7) > 0;
-        let get_set_extended_property = hccparams2 & (1<<8) > 0;
-        let virtualization_based_trusted_io = hccparams2 & (1<<9) > 0;
+        // let hcsparams2 = capabilities.read_offset(0x8);
+        // let isochronous_scheduling_threshold = (hcsparams2 & 0xF) as u8;
+        // let erst_max = (hcsparams2 >> 4 & 0xF) as u8;
+        // let scb_hi = (hcsparams2 >> 21 & 0x1F) as u8;
+        // let scratchpad_restore = (hcsparams2 >> 26 & 1) == 1;
+        // let scb_lo = (hcsparams2 >> 27) as u8;
+        // let max_scratchpad_buffers = scb_lo as u16 | (scb_hi as u16) << 5;
 
-        let vtio_register_space_offset = hccparams2 >> 12;
+        // let hcsparams3 = capabilities.read_offset(0xC);
+        // let u1_device_exit_latency = (hcsparams3 & 0xFF) as u8;
+        // let u2_device_exit_latency = (hcsparams3 >> 16 & 0xFFFF) as u16;
+
+        // let hccparams1 = capabilities.read_offset(0x10);
+        // let ac64 = hccparams1 & 1 > 0;
+        // let bandwith_negotiation = hccparams1 & (1<<1) > 0;
+        // let context_size = hccparams1 & (1<<2) > 0;
+        // let port_power_control = hccparams1 & (1<<3) > 0;
+        // let port_indicators = hccparams1 & (1<<4) > 0;
+        // let light_hc_reset = hccparams1 & (1<<5) > 0;
+        // let latency_tolerance_messaging = hccparams1 & (1<<6) > 0;
+        // let secondary_sid = hccparams1 & (1<<7) == 0; // inverted
+        // let parse_all_event_data = hccparams1 & (1<<8) > 0;
+        // let stopped_short_packet = hccparams1 & (1<<9) > 0;
+        // let stopped_edtla = hccparams1 & (1<<10) > 0;
+        // let contiguous_frame_id = hccparams1 & (1<<11) > 0;
+        // let max_primary_stream_array_size = (hccparams1 >> 12 & 0xF) as u8;
+        // let xhci_extented_capabilities_offset = (hccparams1 >> 16 & 0xFFFFFF) << 2;
+
+        // let hccparams2 = capabilities.read_offset(0x1C);
+        // let u3_entry = hccparams2 & 1 > 0;
+        // let configure_endpoint_command_max_exit_latency_too_large = hccparams2 & (1<<2) > 0;
+        // let force_save_context = hccparams2 & (1<<2) > 0;
+        // let compliance_transition = hccparams2 & (1<<3) > 0;
+        // let large_esit_payload = hccparams2 & (1<<4) > 0;
+        // let configuration_information_capability = hccparams2 & (1<<5) > 0;
+        // let extended_tbc = hccparams2 & (1<<6) > 0;
+        // let extended_tbc_trb_status = hccparams2 & (1<<7) > 0;
+        // let get_set_extended_property = hccparams2 & (1<<8) > 0;
+        // let virtualization_based_trusted_io = hccparams2 & (1<<9) > 0;
+
+        // let vtio_register_space_offset = hccparams2 >> 12;
 
         todo!()
     }
