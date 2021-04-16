@@ -21,6 +21,7 @@ pub struct XhciDriver {
 
 impl XhciDriver {
     pub unsafe fn new(mut base: *mut u32) -> Self {
+        panic!("USB support is put on hold for now");
 
         if (base as u64) < 0xFFFFFF80_00000000 {
             base = (base as u64 | 0xFFFFFF80_00000000) as _;

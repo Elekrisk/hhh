@@ -15,6 +15,7 @@
 #![feature(inherent_associated_types)]
 
 mod usb;
+mod ps2;
 mod exceptions;
 
 #[macro_use]
@@ -22,6 +23,7 @@ extern crate common;
 extern crate alloc;
 
 use alloc::prelude::v1::*;
+use ps2::Ps2Driver;
 
 use core::panic::PanicInfo;
 
@@ -41,7 +43,7 @@ pub extern "sysv64" fn _start(machine_info: MachineInfoC) {
     unsafe { common::writer::init(machine_info.framebuffer) };
     common::writer::clear();
 
-    println!("xhci_base: {:x}", machine_info.xhci_base);
+    // println!("xhci_base: {:x}", machine_info.xhci_base);
 
     let mut idt = Box::new(x86_64::structures::idt::InterruptDescriptorTable::new());
 
@@ -71,9 +73,14 @@ pub extern "sysv64" fn _start(machine_info: MachineInfoC) {
 
     unsafe { idt.load_unsafe(); }
 
-    let driver = unsafe {
-        usb::xhci::XhciDriver::new(machine_info.xhci_base as _)
-    };
+    // let driver = unsafe {
+    //     usb::xhci::XhciDriver::new(machine_info.xhci_base as _)
+    // };
+
+    let mut ps2_driver = Ps2Driver::new();
+    unsafe {
+        ps2_driver.initialize();
+    }
 
     loop {}
 }
