@@ -67,11 +67,11 @@ impl<'a> Elf<'a> {
         };
 
         // Machine
-        if &data[0x12..0x14] != &0x3Eu16.to_le_bytes() {
+        if data[0x12..0x14] != 0x3Eu16.to_le_bytes() {
             return Err(());
         }
         // Version, again
-        if &data[0x14..0x18] != &1u32.to_le_bytes() {
+        if data[0x14..0x18] != 1u32.to_le_bytes() {
             return Err(());
         }
 

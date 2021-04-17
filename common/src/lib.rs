@@ -8,13 +8,13 @@ pub struct MachineInfoC {
     framebuffer: Framebuffer,
     xhci_base: u64,
     allocated_frames_len: usize,
-    allocated_frames_ptr: *mut u8
+    allocated_frames_ptr: *mut u8,
 }
 
 pub struct MachineInfo {
     pub framebuffer: Framebuffer,
     pub xhci_base: u64,
-    pub allocated_frames: &'static mut [u8]
+    pub allocated_frames: &'static mut [u8],
 }
 
 impl From<MachineInfoC> for MachineInfo {
@@ -23,8 +23,11 @@ impl From<MachineInfoC> for MachineInfo {
             framebuffer: machine_info.framebuffer,
             xhci_base: machine_info.xhci_base,
             allocated_frames: unsafe {
-                core::slice::from_raw_parts_mut(machine_info.allocated_frames_ptr, machine_info.allocated_frames_len)
-            }
+                core::slice::from_raw_parts_mut(
+                    machine_info.allocated_frames_ptr,
+                    machine_info.allocated_frames_len,
+                )
+            },
         }
     }
 }
@@ -37,18 +40,18 @@ impl From<MachineInfo> for MachineInfoC {
             framebuffer: machine_info.framebuffer,
             xhci_base: machine_info.xhci_base,
             allocated_frames_len: len,
-            allocated_frames_ptr: ptr
+            allocated_frames_ptr: ptr,
         }
     }
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Framebuffer {
     pub ptr: *mut u32,
     pub resolution_x: usize,
     pub resolution_y: usize,
-    pub stride: usize
+    pub stride: usize,
 }
 
 impl Framebuffer {
@@ -57,7 +60,7 @@ impl Framebuffer {
             ptr,
             resolution_x: resolution.0,
             resolution_y: resolution.1,
-            stride
+            stride,
         }
     }
 

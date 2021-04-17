@@ -1,30 +1,34 @@
-use core::ops::Add;
-
 use x86_64::structures::idt::{InterruptStackFrame, PageFaultErrorCode};
+
+fn halt() -> ! {
+    loop {
+        x86_64::instructions::hlt();
+    }
+}
 
 pub extern "x86-interrupt" fn alignment_check(_stack_frame: InterruptStackFrame, _error_code: u64) {
     println!("\n");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn bound_range_exceeded(_stack_frame: InterruptStackFrame) {
     println!("\nbound_range_exceeded");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn debug(_stack_frame: InterruptStackFrame) {
     println!("\ndebug");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn device_not_available(_stack_frame: InterruptStackFrame) {
     println!("\ndevice_not_available");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn divide_error(_stack_frame: InterruptStackFrame) {
     println!("\ndivide_error");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn general_protection_fault(
@@ -40,32 +44,32 @@ pub extern "x86-interrupt" fn general_protection_fault(
         print!("{:x} ", unsafe { code.add(i).read_volatile() });
     }
     println!();
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn invalid_opcode(_stack_frame: InterruptStackFrame) {
     println!("\ninvalid_opcode");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn invalid_tss(_stack_frame: InterruptStackFrame, _error_code: u64) {
     println!("\ninvalid_tss");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn machine_check(_stack_frame: InterruptStackFrame) -> ! {
     println!("\nmachine_check");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn non_maskable_interrupt(_stack_frame: InterruptStackFrame) {
     println!("\nnon_maskable_interrupt");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn overflow(_stack_frame: InterruptStackFrame) {
     println!("\noverflow");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn security_exception(
@@ -73,7 +77,7 @@ pub extern "x86-interrupt" fn security_exception(
     _error_code: u64,
 ) {
     println!("\nsecurity_exception");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn segment_not_present(
@@ -81,12 +85,12 @@ pub extern "x86-interrupt" fn segment_not_present(
     _error_code: u64,
 ) {
     println!("\nsegment_not_present");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn simd_floating_point(_stack_frame: InterruptStackFrame) {
     println!("\nsimd_floating_point");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn stack_segment_fault(
@@ -94,17 +98,17 @@ pub extern "x86-interrupt" fn stack_segment_fault(
     _error_code: u64,
 ) {
     println!("\nstack_segment_fault");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn virtualization(_stack_frame: InterruptStackFrame) {
     println!("\nvirtualization");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn x87_floating_point(_stack_frame: InterruptStackFrame) {
     println!("\nx87_floating_point");
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn breakpoint(_stack_frame: InterruptStackFrame) {
@@ -123,7 +127,7 @@ pub extern "x86-interrupt" fn page_fault(
         "Caused by instruction at 0x{:x}",
         stack_frame.instruction_pointer
     );
-    loop {}
+    halt();
 }
 
 pub extern "x86-interrupt" fn double_fault(
@@ -131,5 +135,5 @@ pub extern "x86-interrupt" fn double_fault(
     _error_code: u64,
 ) -> ! {
     println!("\ndouble fault");
-    loop {}
+    halt();
 }

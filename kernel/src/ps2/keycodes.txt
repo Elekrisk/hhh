@@ -1,0 +1,85 @@
+01 - F9
+03 - F5
+04 - F3
+05 - F1
+06 - F2
+07 - F12
+09 - F10
+0A - F8
+0B - F6
+0C - F4
+0D - Tab
+0E - §
+11 - Left Alt
+12 - Left Shift
+14 - Left Control
+15 - Q
+16 - 1
+1A - Z
+1B - S
+1C - A
+1D - W
+1E - 2
+21 - C
+22 - X
+23 - D
+24 - E
+25 - 4
+26 - 3
+29 - Space
+2A - V
+2B - F
+2C - T
+2D - R
+2E - 5
+31 - N
+32 - B
+33 - H
+34 - G
+35 - Y
+36 - 6
+3A - M
+3B - J
+3C - U
+3D - 7
+3E - 8
+41 - ,
+42 - K
+43 - I
+44 - O
+45 - 0
+46 - 9
+49 - .
+4A - -
+4B - L
+4C - Ö
+4D - P
+4E - +
+52 - Ä
+54 - Å
+55 - ´
+58 - CapsLock
+59 - Right Shift
+5A - Enter
+5B - ¨
+5D - '
+61 - <
+66 - Backspace
+76 - Escape
+78 - F11
+83 - F7
+
+E0 11 - Right Alt
+E0 14 - Right Control
+E0 1F - Left Windows
+E0 2B - Calculator
+E0 6B - Left
+E0 6C - Home
+E0 69 - End
+E0 70 - Insert
+E0 71 - Delete
+E0 72 - Down
+E0 74 - Right
+E0 75 - Up
+E0 7A - Page Down
+E0 7D - Page Up

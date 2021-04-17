@@ -1,7 +1,7 @@
-use std::io::{Write};
+use std::io::Write;
 
 fn main() {
-    let path = std::env::args().skip(1).next().unwrap();
+    let path = std::env::args().nth(1).unwrap();
     let image = image::open(path).unwrap();
     let image = image.to_luma8();
     assert_eq!(image.width(), 128);

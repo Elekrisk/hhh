@@ -11,17 +11,15 @@ mod datastructures;
 #[macro_use]
 mod register;
 
-
-
 pub struct XhciDriver {
     capability: &'static mut Capability,
     operational: &'static mut Operational,
-    ports: &'static mut [Port]
+    ports: &'static mut [Port],
 }
 
 impl XhciDriver {
     pub unsafe fn new(mut base: *mut u32) -> Self {
-        panic!("USB support is put on hold for now");
+        // panic!("USB support is put on hold for now");
 
         if (base as u64) < 0xFFFFFF80_00000000 {
             base = (base as u64 | 0xFFFFFF80_00000000) as _;
@@ -34,8 +32,13 @@ impl XhciDriver {
         let cap_length = capability.cap_length();
         let port_count = capability.max_ports();
 
-        let operational = ((base as u64 + cap_length as u64) as *mut Operational).as_mut().unwrap();
-        let ports = core::slice::from_raw_parts_mut((base as u64 + cap_length as u64 + 0x400) as *mut Port, port_count as _);
+        let operational = ((base as u64 + cap_length as u64) as *mut Operational)
+            .as_mut()
+            .unwrap();
+        let ports = core::slice::from_raw_parts_mut(
+            (base as u64 + cap_length as u64 + 0x400) as *mut Port,
+            port_count as _,
+        );
 
         let dcbaap = operational.device_context_base_address_array_pointer();
         let dcbaap = dcbaap | 0xFFFFFF80_00000000;
@@ -46,7 +49,7 @@ impl XhciDriver {
         } else {
             println!("32-bit contexts");
         };
-        
+
         let device_slots_enabled = operational.max_device_slots_enabled();
         println!("Max {} device slots are enabled", device_slots_enabled);
 
@@ -61,7 +64,7 @@ impl XhciDriver {
         let mut driver = XhciDriver {
             capability,
             operational,
-            ports
+            ports,
         };
 
         for port in driver.ports.iter() {
@@ -69,7 +72,6 @@ impl XhciDriver {
                 println!("Found connected USB device!");
             }
         }
-
 
         driver.initialize();
         driver
@@ -92,17 +94,12 @@ impl XhciDriver {
             // Box should give us the correct alignment, as we have specified the alignment
             // of the DCBAA to 4K, which will also guarantee that the structure is contained in one
             // physical frame.
-            let dcbaa = Box::<Dcbaa64>::new(
-                Dcbaa64::new()
-            );
+            let dcbaa = Box::<Dcbaa64>::new(Dcbaa64::new());
             dcbaa as Box<dyn DcbaaWrapper>
         } else {
-            let dcbaa = Box::<Dcbaa32>::new(
-                Dcbaa32::new()
-            );
+            let dcbaa = Box::<Dcbaa32>::new(Dcbaa32::new());
             dcbaa as Box<dyn DcbaaWrapper>
         };
-        
 
         loop {}
     }

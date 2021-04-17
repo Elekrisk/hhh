@@ -1,4 +1,7 @@
-use core::{cell::UnsafeCell, ops::{BitAnd, Shr}};
+use core::{
+    cell::UnsafeCell,
+    ops::{BitAnd, Shr},
+};
 
 // use core::{cell::UnsafeCell, convert::{TryFrom, TryInto}, fmt::Debug, marker::PhantomData, mem::{Discriminant, discriminant}, ops::{BitAnd, BitOr, Not, Shl, Shr}};
 
@@ -15,7 +18,6 @@ use core::{cell::UnsafeCell, ops::{BitAnd, Shr}};
 //         }
 //     }
 // }
-
 
 // pub trait Num: Copy + Sized + Not<Output=Self> + Shl<usize, Output=Self> + Shr<usize, Output=Self> + BitAnd<Self, Output=Self> + BitOr<Self, Output=Self> {
 //     const ZERO: Self;
@@ -152,7 +154,7 @@ use core::{cell::UnsafeCell, ops::{BitAnd, Shr}};
 //         }
 //     };
 // }
-    
+
 // macro_rules! reg_def {
 //     ($regdef:ident, $t:ty : $( $regpart:ident $($flags:ident)? $(: $output:ty ,)? $(($bw:literal, $bo:literal))? $($b:literal)? $({ $from:expr $(, $to:expr )?})?);* $(;)?) => {
 //         pub struct $regdef;
@@ -309,7 +311,7 @@ use core::{cell::UnsafeCell, ops::{BitAnd, Shr}};
 
 #[repr(transparent)]
 pub struct Register<T: Copy = u32> {
-    data: UnsafeCell<T>
+    data: UnsafeCell<T>,
 }
 
 impl<T: Copy + Num> Register<T> {
@@ -328,8 +330,7 @@ impl<T: Copy + Num> Register<T> {
     }
 }
 
-
-pub trait Num: Eq + Copy + Sized + Shr<usize, Output=Self> + BitAnd<Self, Output=Self> {
+pub trait Num: Eq + Copy + Sized + Shr<usize, Output = Self> + BitAnd<Self, Output = Self> {
     const ONE: Self;
 }
 
@@ -351,7 +352,7 @@ pub struct Capability {
     dboff: Register,
     rtsoff: Register,
     hccparams2: Register,
-    vtiosoff: Register
+    vtiosoff: Register,
 }
 
 impl Capability {
@@ -458,11 +459,11 @@ impl Capability {
     }
 
     pub fn max_primary_stream_array_size(&self) -> u8 {
-        (unsafe {self.hccparams1.read() } >> 12 & 0xF) as u8
+        (unsafe { self.hccparams1.read() } >> 12 & 0xF) as u8
     }
 
     pub fn xhci_extended_capabilities_pointer(&self) -> u32 {
-        ((unsafe { self.hccparams1.read() } >> 16 & 0xFFFF) as u32) << 2 
+        ((unsafe { self.hccparams1.read() } >> 16 & 0xFFFF) as u32) << 2
     }
 
     // dboff
@@ -526,7 +527,6 @@ impl Capability {
     }
 }
 
-
 #[repr(C)]
 pub struct Operational {
     /// Write strategy: Preserve for all
@@ -542,7 +542,7 @@ pub struct Operational {
     _reserved2: [Register; 4],
     dcbaap: Register<u64>,
     /// Write strategy: Preserve for all
-    config: Register
+    config: Register,
 }
 
 impl Operational {
@@ -904,7 +904,7 @@ pub struct Port {
     /// Write strategy: Preserve for all
     portpmsc: Register,
     portli: Register,
-    porthlpmc: Register
+    porthlpmc: Register,
 }
 
 impl Port {
@@ -1252,7 +1252,7 @@ impl Port {
     // NOTE: The documentation is not clear where
     // PORTEXSC is located, so no fuctionality bound
     // to that register is made available.
-    
+
     // PORTHLPMC is currently not made available because
     // of lazyness.
 }

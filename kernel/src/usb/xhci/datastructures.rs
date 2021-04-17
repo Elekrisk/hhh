@@ -1,4 +1,7 @@
-use core::{cell::UnsafeCell, ops::{Index, IndexMut}};
+use core::{
+    cell::UnsafeCell,
+    ops::{Index, IndexMut},
+};
 
 use super::register::{Num, Register};
 
@@ -8,14 +11,14 @@ use alloc::prelude::v1::*;
 struct TrbTemplate {
     parameter: u64,
     status: u32,
-    control: u32
+    control: u32,
 }
 
 ///  Lookup table for accessing DeviceContext structures.
 #[repr(C, align(4096))]
 pub struct Dcbaa32 {
     scratchpad_bufer_addr: *mut (),
-    device_contexts: [Option<Box<DeviceContext32>>; 255]
+    device_contexts: [Option<Box<DeviceContext32>>; 255],
 }
 
 impl Dcbaa32 {
@@ -23,14 +26,14 @@ impl Dcbaa32 {
     pub const fn new() -> Self {
         Self {
             scratchpad_bufer_addr: 0 as _,
-            device_contexts: [Self::NONE; 255]
+            device_contexts: [Self::NONE; 255],
         }
     }
 }
 #[repr(C, align(4096))]
 pub struct Dcbaa64 {
     scratchpad_bufer_addr: *mut (),
-    device_contexts: [Option<Box<DeviceContext64>>; 255]
+    device_contexts: [Option<Box<DeviceContext64>>; 255],
 }
 
 impl Dcbaa64 {
@@ -38,7 +41,7 @@ impl Dcbaa64 {
     pub const fn new() -> Self {
         Self {
             scratchpad_bufer_addr: 0 as _,
-            device_contexts: [Self::NONE; 255]
+            device_contexts: [Self::NONE; 255],
         }
     }
 }
@@ -48,12 +51,11 @@ pub trait DcbaaWrapper {}
 impl DcbaaWrapper for Dcbaa32 {}
 impl DcbaaWrapper for Dcbaa64 {}
 
-
 /// Contains device configuration and state information.
 #[repr(C, align(4096))]
 struct DeviceContext32 {
     slot_context: SlotContext,
-    endpoint_contexts: [EndpointContext; 31]
+    endpoint_contexts: [EndpointContext; 31],
 }
 
 impl Index<usize> for DeviceContext32 {
@@ -74,7 +76,7 @@ impl IndexMut<usize> for DeviceContext32 {
 struct DeviceContext64 {
     slot_context: SlotContext,
     padding: u32,
-    endpoint_contexts: [EndpointContext; 62]
+    endpoint_contexts: [EndpointContext; 62],
 }
 
 impl Index<usize> for DeviceContext64 {
@@ -91,18 +93,16 @@ impl IndexMut<usize> for DeviceContext64 {
     }
 }
 
-
 #[repr(C)]
 struct SlotContext {
     register0: Register<u32>,
     register1: Register<u32>,
     register2: Register<u32>,
     register3: Register<u32>,
-    reserved: [u32; 4]
+    reserved: [u32; 4],
 }
 
 impl SlotContext {
-
     // register0
 
     pub fn route_string(&self) -> u32 {
@@ -166,5 +166,5 @@ impl SlotContext {
 
 #[repr(C)]
 struct EndpointContext {
-    data: Register<u32>
+    data: Register<u32>,
 }

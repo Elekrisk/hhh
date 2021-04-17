@@ -7,6 +7,7 @@
 #![feature(asm)]
 #![feature(vec_into_raw_parts)]
 #![feature(abi_x86_interrupt)]
+#![allow(incomplete_features)]
 #![feature(const_generics)]
 #![feature(const_evaluatable_checked)]
 #![feature(panic_info_message)]
@@ -68,6 +69,7 @@ use x86_64::{
 };
 extern crate alloc;
 
+#[allow(clippy::clippy::identity_op)]
 const _1G: u64 = 1 * 1024 * 1024 * 1024;
 const _2M: u64 = 2 * 1024 * 1024;
 const _4K: u64 = 4 * 1024;
@@ -148,8 +150,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             let num_entries = length / mem::size_of::<McfgEntry>();
 
             unsafe {
-                let pointer = (mcfg as *const Mcfg as *const u8)
-                    .offset(mem::size_of::<Mcfg>() as isize)
+                let pointer = (mcfg as *const Mcfg as *const u8).add(mem::size_of::<Mcfg>())
                     as *const McfgEntry;
                 slice::from_raw_parts(pointer, num_entries)
             }
@@ -179,6 +180,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                 let base = entries[0].base_address;
 
                 let mut xhci_cfg_base = None;
+                // let mut pata_base = None;
                 for i in 0.. {
                     let base = base + (i << 12);
                     if base > 0xffffffff {
@@ -191,9 +193,11 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                         let subclass = info >> 16 & 0xFF;
                         let function = info >> 8 & 0xFF;
                         let revision = info & 0xFF;
-                        if class == 0xC && subclass == 0x3 && function == 0x30 {
+                        if xhci_cfg_base.is_none() && class == 0xC && subclass == 0x3 && function == 0x30 {
                             xhci_cfg_base = Some(base);
-                            break;
+                        } else if /*pata_base.is_none() &&*/ class == 0x01 {
+                            println!("PCI device {:02x} {:02x} {:02x} {:02x}", class, subclass, function, revision);
+                            
                         }
                     }
                 }
@@ -262,6 +266,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                                 let class = data >> 24 & 0xFF;
                                 let subclass = data >> 16 & 0xFF;
                                 let function = data >> 8 & 0xFF;
+                                let revision = data & 0xFF;
                                 if class == 0xC && subclass == 0x3 && function == 0x30 {
                                     // Found XHCI!
                                     set_cfg_addr(addr | 0x10);
@@ -272,6 +277,8 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                                     xhci_base = Some(bar1 << 32 | bar0);
                                     println!("xhci_base: {:x}", xhci_base.unwrap());
                                     // loop {}
+                                } else if class == 0x01 {
+                                    println!("PCI device {:02x} {:02x} {:02x} {:02x}", class, subclass, function, revision);
                                 }
                             }
                         }
@@ -279,6 +286,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                 }
                 xhci_base.expect("No USB 3 controller found")
             };
+        loop {}
 
         // let fs_proto = system_table.boot_services().locate_protocol::<SimpleFileSystem>().unwrap().unwrap();
         let fs_proto = st
@@ -304,7 +312,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                 continue;
             }
             println!("file {}", entries.file_name());
-            if entries.file_name().to_u16_slice() == &to_utf16::<10>("kernel.elf") {
+            if entries.file_name().to_u16_slice() == to_utf16::<10>("kernel.elf") {
                 break entries;
             }
         };
@@ -314,13 +322,14 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             .open("kernel.elf", FileMode::Read, FileAttribute::empty())
             .unwrap_success();
 
-        let mut elf_buffer = Vec::with_capacity(kernel_size as _);
-        elf_buffer.resize(kernel_size as _, 0);
+        let mut elf_buffer = alloc::vec![0; kernel_size as _];
         let kernel_elf = match kernel_file.into_type().unwrap_success() {
             FileType::Regular(mut f) => {
                 if f.read(&mut elf_buffer).unwrap_success() < kernel_size as _ {
                     log::error!("Entire kernel file was not read at once");
-                    loop {}
+                    loop {
+                        x86_64::instructions::hlt();
+                    }
                 }
                 Elf::parse(&elf_buffer).unwrap()
             }
@@ -682,7 +691,14 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
                 }
             }
 
-            println!("maping kernel");
+            // println!("Marking framebuffer frames as allocated");
+            // let start_frame = machine_info.framebuffer.ptr as u64 >> 12;
+            // let last_frame = ((machine_info.framebuffer.resolution_y * machine_info.framebuffer.stride) >> 12) as u64 + start_frame;
+            // for frame in start_frame..=last_frame {
+            //     machine_info.allocated_frames[(frame / 8) as usize] |= 1 << (frame % 8);
+            // }
+
+            println!("mapping kernel");
             for ((vstart, vend), (pstart, pend)) in kernel_addresses {
                 for (vpage, ppage) in (*vstart..=*vend).zip(*pstart..=*pend) {
                     let idx4 = (vpage >> 18) as usize & 0x1FF;
@@ -724,7 +740,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             .unwrap()
             .unwrap();
 
-        assert_mapped(pml4t, VirtAddr::new(entry as u64), true);
+        assert_mapped(pml4t, VirtAddr::new(entry as usize as u64), true);
         assert_mapped(
             pml4t,
             VirtAddr::new(&GDT as *const GlobalDescriptorTable as u64),
@@ -735,7 +751,7 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
             VirtAddr::new(&IDT as *const InterruptDescriptorTable as u64),
             true,
         );
-        assert_mapped(pml4t, VirtAddr::new(page_fault as u64), true);
+        assert_mapped(pml4t, VirtAddr::new(page_fault as usize as u64), true);
         let mut sp;
         asm!("mov {}, rsp", lateout(reg) sp);
         assert_mapped(pml4t, VirtAddr::new(sp), true);
@@ -804,7 +820,9 @@ fn efi_main(image_handle: Handle, st: SystemTable<Boot>) -> Status {
 
     println!("DONE");
 
-    loop {}
+    loop {
+        x86_64::instructions::hlt();
+    }
 }
 
 unsafe fn map(pml4: &mut PageTable, virt: VirtAddr, frame: PhysFrame) -> Result<(), &'static str> {
@@ -977,25 +995,6 @@ where
 
 static mut GDT: GlobalDescriptorTable = GlobalDescriptorTable::new();
 static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
-
-struct Pager {
-    count: usize,
-    max: usize,
-}
-
-impl Pager {
-    pub fn new(max: usize) -> Self {
-        Self { count: 0, max }
-    }
-
-    pub fn next(&mut self, st: &SystemTable<Boot>) {
-        self.count += 1;
-        if self.count >= self.max {
-            wait_for_key(st);
-            self.count = 0;
-        }
-    }
-}
 
 fn wait_for_key(st: &SystemTable<Boot>) {
     st.stdin().reset(false).unwrap().unwrap();
